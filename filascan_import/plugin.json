@@ -1,0 +1,21 @@
+{
+  "plugin_key": "filascan_import",
+  "name": "FilaScan Spool Import",
+  "version": "0.1.10",
+  "description": "Imports decoded filament spool data received from authorized FilaScan devices.",
+  "author": "MasonVX",
+  "license": "MIT",
+  "homepage": "https://github.com/MasonVX/filascan-import",
+  "plugin_type": "integration",
+  "page_url": "/plugin-page/filascan-import",
+  "show_in_nav": true,
+  "dependencies": [],
+  "capabilities": {
+    "device_auth": true,
+    "bambu_import": true,
+    "idempotent_import": true,
+    "location_selection": true,
+    "location_management": true,
+    "spool_archiving": true
+  }
+}

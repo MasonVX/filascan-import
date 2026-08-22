@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "filascan-import-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+
+      - name: Checkout FilaMan backend
+        uses: actions/checkout@v4
+        with:
+          repository: Fire-Devils/filaman-system
+          path: .filaman-system
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install FilaMan test dependencies
+        run: uv sync --project .filaman-system/backend --extra dev
+
+      - name: Run plugin tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/.filaman-system/backend:${{ github.workspace }}
+        run: .filaman-system/backend/.venv/bin/python -m pytest -q
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(python -c 'import json; print(json.load(open("filascan_import/plugin.json"))["version"])')
+          EXPECTED_TAG="filascan-import-v${VERSION}"
+          test "$GITHUB_REF_NAME" = "$EXPECTED_TAG" || {
+            echo "Tag $GITHUB_REF_NAME does not match manifest version $EXPECTED_TAG" >&2
+            exit 1
+          }
+
+      - name: Build release archive
+        run: python scripts/build_release.py
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(python -c 'import json; print(json.load(open("filascan_import/plugin.json"))["version"])')
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/filascan-import-${VERSION}.zip" \
+            "dist/filascan-import-${VERSION}.zip.sha256" \
+            --title "FilaScan Import ${VERSION}" \
+            --generate-notes \
+            --verify-tag

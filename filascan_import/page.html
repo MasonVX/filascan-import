@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en" data-theme="brand">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>FilaScan Spool Import · FilaMan</title>
+  <style>
+    :root { color-scheme:dark; --bg:#111613; --surface:#1b231e; --soft:#222d27; --text:#edf5f0; --muted:#a4b2aa; --border:#33423a; --accent:#31d69a; --accent2:#68e3b6; --danger:#ff8686; --warning:#f4b65f; --shadow:0 16px 42px rgba(0,0,0,.25); font-family:Inter,ui-sans-serif,system-ui,sans-serif; }
+    [data-theme="brand"] { color-scheme:dark; --bg:#111613; --surface:#1b231e; --soft:#222d27; --text:#edf5f0; --muted:#a4b2aa; --border:#33423a; --accent:#31d69a; --accent2:#68e3b6; --danger:#ff8686; --warning:#f4b65f; --shadow:0 16px 42px rgba(0,0,0,.25); }
+    [data-theme="dark"] { color-scheme:dark; --bg:#111613; --surface:#1b231e; --soft:#222d27; --text:#edf5f0; --muted:#a4b2aa; --border:#33423a; --accent:#31d69a; --accent2:#68e3b6; --danger:#ff8686; --warning:#f4b65f; --shadow:0 16px 42px rgba(0,0,0,.25); }
+    [data-theme="light"] { color-scheme:light; --bg:#f7f8f7; --surface:#fff; --soft:#f0f3f1; --text:#17201b; --muted:#637069; --border:#dce5df; --accent:#008f5a; --accent2:#007a4c; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--text); background:var(--bg); font:15px/1.5 Inter,ui-sans-serif,system-ui,sans-serif; }
+    a { color:inherit; }
+    button,input { font:inherit; }
+    .page-shell { width:min(980px,calc(100% - 28px)); margin:auto; padding:28px 0 60px; }
+    .topbar { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:38px; }
+    .brand { display:flex; align-items:center; gap:12px; color:inherit; text-decoration:none; }
+    .brand img { width:43px; height:43px; border-radius:13px; }
+    .brand strong,.brand small { display:block; }
+    .brand small { color:var(--muted); font-size:.75rem; }
+    .topbar-actions { display:flex; align-items:center; gap:10px; }
+    .back { color:var(--muted); font-weight:700; }
+    .language-switch { display:flex; gap:4px; padding:4px; border-radius:10px; background:var(--soft); }
+    .language-switch button { width:auto; min-height:32px; padding:0 10px; border:0; border-radius:7px; color:var(--muted); background:transparent; cursor:pointer; }
+    .language-switch button.active { color:var(--text); background:var(--surface); box-shadow:0 2px 8px rgba(0,0,0,.08); }
+    .eyebrow { margin:0 0 6px; color:var(--accent2); font-size:.74rem; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+    h1 { margin:0; font-size:clamp(30px,5vw,48px); line-height:1.05; letter-spacing:-.04em; }
+    .lead { max-width:760px; margin:13px 0 26px; color:var(--muted); font-size:1.02rem; }
+    .grid { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(260px,.7fr); gap:18px; align-items:start; }
+    .card { padding:22px; border:1px solid var(--border); border-radius:18px; background:var(--surface); box-shadow:var(--shadow); }
+    h2 { margin:0 0 7px; font-size:1.15rem; }
+    p { color:var(--muted); }
+    code { color:var(--accent2); overflow-wrap:anywhere; }
+    .device { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:14px; align-items:center; padding:14px 0; border-top:1px solid var(--border); }
+    .device:first-child { border-top:0; }
+    .device-name { font-weight:700; }
+    .device-meta { color:var(--muted); font-size:.86rem; }
+    .badge { padding:4px 9px; border-radius:999px; color:var(--accent2); background:var(--soft); font-size:.78rem; }
+    input[type=checkbox] { width:20px; height:20px; accent-color:var(--accent); }
+    .btn { min-height:42px; padding:0 15px; border:0; border-radius:10px; color:#fff; background:linear-gradient(145deg,var(--accent),var(--accent2)); font-weight:750; cursor:pointer; }
+    .btn:disabled { opacity:.55; cursor:wait; }
+    .actions { display:flex; align-items:center; gap:12px; margin-top:18px; }
+    .success { color:var(--accent2); }
+    .error { color:var(--danger); }
+    .empty { color:var(--warning); }
+    .feature-list { display:grid; gap:10px; margin:15px 0 0; padding:0; list-style:none; }
+    .feature-list li { padding:10px 12px; border-radius:11px; color:var(--muted); background:var(--soft); }
+    @media (max-width:850px) { .grid { grid-template-columns:1fr; } }
+    @media (max-width:560px) { .page-shell { padding-top:16px; } .topbar { align-items:flex-start; margin-bottom:28px; } .brand small,.back { display:none; } }
+  </style>
+</head>
+<body>
+<main class="page-shell">
+  <nav class="topbar">
+    <a class="brand" href="/"><img src="/logo.png" alt="FilaMan"><span><strong>FilaMan</strong><small data-i18n="appSubtitle">Filament management</small></span></a>
+    <div class="topbar-actions">
+      <a class="back" href="/admin/system" data-i18n="managePlugins">Manage plugins</a>
+      <div class="language-switch" aria-label="Language" data-i18n-aria="languageLabel"><button type="button" data-lang="en">EN</button><button type="button" data-lang="de">DE</button></div>
+    </div>
+  </nav>
+  <div class="page">
+      <p class="eyebrow" data-i18n="integrationPlugin">Integration plugin</p>
+      <h1 data-i18n="pageTitle">FilaScan Spool Import</h1>
+      <p class="lead" data-i18n="intro">Explicitly select the registered devices allowed to send decoded spool data to FilaMan. A valid token from another device is not sufficient.</p>
+      <div class="grid">
+        <section class="card">
+          <h2 data-i18n="authorizedDevices">Authorized devices</h2>
+          <p data-i18n="deviceHint">Only active devices selected here may use the FilaScan import, location and archive endpoints.</p>
+          <div id="devices"><p data-i18n="loadingDevices">Loading devices…</p></div>
+          <div class="actions"><button class="btn" id="save" type="button" disabled data-i18n="saveSelection">Save selection</button><span id="message" aria-live="polite"></span></div>
+        </section>
+        <aside class="card">
+          <h2 data-i18n="identity">Spool identity</h2>
+          <p data-i18n="identityHint">The spool is assigned using the canonical Bambu Tray UID. Physical RFID tag UIDs are neither accepted nor stored.</p>
+          <code>external_id=bambulab:&lt;TRAY_UUID&gt;</code>
+          <ul class="feature-list">
+            <li data-i18n="locationSelection">Location selection for new spools</li>
+            <li data-i18n="locationManagement">Location management for existing spools</li>
+            <li data-i18n="archiveSupport">Idempotent spool archiving and restoration</li>
+          </ul>
+        </aside>
+      </div>
+  </div>
+</main>
+
+<script>
+(() => {
+  const messages = {
+    en: {
+      appSubtitle:'Filament management', languageLabel:'Language', managePlugins:'Manage plugins', integrationPlugin:'Integration plugin', pageTitle:'FilaScan Spool Import', intro:'Explicitly select the registered devices allowed to send decoded spool data to FilaMan. A valid token from another device is not sufficient.', authorizedDevices:'Authorized devices', deviceHint:'Only active devices selected here may use the FilaScan import, location and archive endpoints.', loadingDevices:'Loading devices…', saveSelection:'Save selection', identity:'Spool identity', identityHint:'The spool is assigned using the canonical Bambu Tray UID. Physical RFID tag UIDs are neither accepted nor stored.', locationSelection:'Location selection for new spools', locationManagement:'Location management for existing spools', archiveSupport:'Idempotent spool archiving and restoration', noDevices:'No devices are registered in FilaMan yet.', registered:'registered', inactive:'inactive', deviceId:'Device ID', unknownError:'Unknown error', loadFailed:'The configuration could not be loaded.', saving:'Saving…', saved:'Selection saved.', invalidDeviceId:'Device IDs must be positive.', invalidAllowlist:'One or more devices are unknown or inactive.'
+    },
+    de: {
+      appSubtitle:'Filamentverwaltung', languageLabel:'Sprache', managePlugins:'Plugins verwalten', integrationPlugin:'Integrations-Plugin', pageTitle:'FilaScan-Spulenimport', intro:'Wähle explizit die registrierten Geräte aus, die dekodierte Spulendaten an FilaMan senden dürfen. Ein gültiger Token eines anderen Geräts reicht nicht aus.', authorizedDevices:'Autorisierte Geräte', deviceHint:'Nur hier ausgewählte aktive Geräte dürfen die FilaScan-Endpunkte für Import, Standort und Archivierung verwenden.', loadingDevices:'Geräte werden geladen …', saveSelection:'Auswahl speichern', identity:'Spulenidentität', identityHint:'Die Spule wird über die kanonische Bambu Tray UID zugeordnet. Physische RFID-Tag-UIDs werden weder angenommen noch gespeichert.', locationSelection:'Standortauswahl für neue Spulen', locationManagement:'Standortverwaltung bestehender Spulen', archiveSupport:'Idempotente Archivierung und Wiederherstellung', noDevices:'In FilaMan sind noch keine Geräte registriert.', registered:'registriert', inactive:'inaktiv', deviceId:'Geräte-ID', unknownError:'Unbekannter Fehler', loadFailed:'Die Konfiguration konnte nicht geladen werden.', saving:'Wird gespeichert …', saved:'Auswahl gespeichert.', invalidDeviceId:'Geräte-IDs müssen positiv sein.', invalidAllowlist:'Mindestens ein Gerät ist unbekannt oder inaktiv.'
+    }
+  };
+  let lang = localStorage.getItem('lang') === 'de' ? 'de' : 'en';
+  const tr = key => messages[lang][key] || messages.en[key] || key;
+  const translate = () => {
+    document.documentElement.lang = lang;
+    document.querySelectorAll('[data-i18n]').forEach(node => { node.textContent = tr(node.dataset.i18n); });
+    document.querySelectorAll('[data-i18n-aria]').forEach(node => { node.setAttribute('aria-label', tr(node.dataset.i18nAria)); });
+    document.querySelectorAll('[data-lang]').forEach(button => button.classList.toggle('active', button.dataset.lang === lang));
+    document.title = `${tr('pageTitle')} · FilaMan`;
+  };
+  document.documentElement.dataset.theme = localStorage.getItem('theme') || 'brand';
+  document.querySelectorAll('[data-lang]').forEach(button => button.addEventListener('click', () => { lang = button.dataset.lang; localStorage.setItem('lang', lang); translate(); renderDevices(currentDevices); }));
+
+  const devicesNode = document.getElementById('devices');
+  const saveButton = document.getElementById('save');
+  const messageNode = document.getElementById('message');
+  let currentDevices = [];
+  const csrfToken = () => document.cookie.split('; ').find(value => value.startsWith('csrf_token='))?.split('=').slice(1).join('=') || '';
+  const showMessage = (text, kind='') => { messageNode.textContent=text; messageNode.className=kind; };
+  const errorMessage = error => {
+    if (error?.detail?.code === 'invalid_device_id') return tr('invalidDeviceId');
+    if (error?.detail?.code === 'invalid_device_allowlist') return tr('invalidAllowlist');
+    return typeof error?.detail === 'string' ? error.detail : (error?.detail?.message || tr('unknownError'));
+  };
+  async function api(path, options={}) {
+    const headers={Accept:'application/json',...(options.headers||{})};
+    if (options.method && options.method !== 'GET') { headers['Content-Type']='application/json'; headers['X-CSRF-Token']=decodeURIComponent(csrfToken()); }
+    const response=await fetch(path,{credentials:'same-origin',...options,headers});
+    const payload=await response.json().catch(()=>({}));
+    if (!response.ok) throw new Error(errorMessage(payload));
+    return payload;
+  }
+  function renderDevices(devices) {
+    currentDevices=devices || [];
+    devicesNode.replaceChildren();
+    if (!currentDevices.length) { const empty=document.createElement('p'); empty.className='empty'; empty.textContent=tr('noDevices'); devicesNode.appendChild(empty); saveButton.disabled=true; return; }
+    for (const device of currentDevices) {
+      const row=document.createElement('label'); row.className='device';
+      const checkbox=document.createElement('input'); checkbox.type='checkbox'; checkbox.dataset.deviceId=String(device.id); checkbox.checked=Boolean(device.allowed); checkbox.disabled=!device.is_active;
+      const details=document.createElement('div'); const name=document.createElement('div'); name.className='device-name'; name.textContent=device.name;
+      const meta=document.createElement('div'); meta.className='device-meta'; meta.textContent=`${tr('deviceId')} ${device.id}`; details.append(name,meta);
+      const badge=document.createElement('span'); badge.className='badge'; badge.textContent=device.is_active ? tr('registered') : tr('inactive'); row.append(checkbox,details,badge); devicesNode.appendChild(row);
+    }
+    saveButton.disabled=false;
+  }
+  async function load() { showMessage(''); try { const result=await api('/api/v1/filascan-import/config'); renderDevices(result.devices); } catch(error) { devicesNode.innerHTML=`<p class="error">${tr('loadFailed')}</p>`; showMessage(error.message,'error'); } }
+  saveButton.addEventListener('click',async()=>{ saveButton.disabled=true; showMessage(tr('saving')); const allowed_device_ids=[...devicesNode.querySelectorAll('input[type=checkbox]:checked')].map(input=>Number(input.dataset.deviceId)); try { await api('/api/v1/filascan-import/config',{method:'PUT',body:JSON.stringify({allowed_device_ids})}); showMessage(tr('saved'),'success'); } catch(error) { showMessage(error.message,'error'); } finally { saveButton.disabled=false; } });
+  async function initLanguage() {
+    try { const me=await fetch('/api/v1/me',{credentials:'same-origin'}); if (me.status===401) { location.href='/login'; return; } if (me.ok) { const user=await me.json(); if (user.language==='de' || user.language==='en') { lang=user.language; localStorage.setItem('lang',lang); } } } catch {}
+    translate();
+  }
+  translate(); initLanguage(); load();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+
+      - name: Checkout FilaMan backend
+        uses: actions/checkout@v4
+        with:
+          repository: Fire-Devils/filaman-system
+          path: .filaman-system
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install FilaMan test dependencies
+        run: uv sync --project .filaman-system/backend --extra dev
+
+      - name: Run plugin tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/.filaman-system/backend:${{ github.workspace }}
+        run: .filaman-system/backend/.venv/bin/python -m pytest -q
+
+      - name: Build and validate release archive
+        run: python scripts/build_release.py
+
+      - name: Upload test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: filascan-import-test-build
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
