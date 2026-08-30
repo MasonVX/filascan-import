@@ -1,7 +1,7 @@
 {
   "plugin_key": "filascan_import",
   "name": "FilaScan Spool Import",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Imports decoded filament spool data received from authorized FilaScan devices.",
   "author": "MasonVX",
   "license": "MIT",

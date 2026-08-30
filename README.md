@@ -9,7 +9,7 @@ from an authorized FilaScan device. FilaScan only needs its existing Device toke
 the plugin performs the narrowly scoped inventory transaction without granting
 generic manufacturer, color, filament or spool CRUD scopes.
 
-Current plugin version: **0.1.10**
+Current plugin version: **0.1.11**
 
 ## Features
 
@@ -107,7 +107,32 @@ the plugin creates a predictable FilamentDB-style fallback such as
 plugin version is renamed to this form on the next scan, even if FilaScan's
 material label has changed in the meantime; user-created and catalog names are
 never rewritten. The normalized five-digit product identity is also written as
-`bambu_product_code` so the independent Bambu plugin can enrich the same record.
+`article_number`, the same canonical field used by the independent Bambu plugin.
+The human-readable color remains available through FilaMan's native color and
+`manufacturer_color_name` fields.
+
+## Shared metadata fields
+
+FilaScan keeps the visible extra-field list intentionally small and follows the
+same metadata contract as the Bambu Lab plugin:
+
+| Field | Target | Purpose |
+|---|---|---|
+| `article_number` | Filament | Visible five-digit Bambu color/product code. |
+| `bambu_filament_length_m` | Spool | Visible source filament length in metres. |
+| `bambu_production_date` | Spool | Visible Bambu production timestamp. |
+
+The Tray UUID is stored canonically in the spool's native `external_id` rather
+than duplicated as an extra field. Color names and RGB colors use FilaMan's
+native color records. Material identity and temperature/drying metadata remain
+on the shared filament record for integration compatibility but are not
+registered as additional visible fields. Physical RFID-chip fields remain
+owned exclusively by the Bambu Lab plugin.
+
+Upgrading from 0.1.10 removes obsolete FilaScan-owned field definitions on the
+next scan while retaining existing record data. Legacy `bambu_color_code` and
+`bambu_product_code` values remain readable, but new imports write only the
+canonical `article_number`.
 
 ## Installation
 

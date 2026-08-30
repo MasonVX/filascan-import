@@ -37,6 +37,9 @@ from .schemas import (
 logger = logging.getLogger(__name__)
 PLUGIN_KEY = "filascan_import"
 BAMBU_EXTERNAL_ID_PREFIX = "bambulab:"
+ARTICLE_NUMBER_FIELD = "article_number"
+FILAMENT_IMAGE_URL_FIELD = "filament_image_url"
+FILAMENT_IMAGE_PROVIDER_FIELD = "filament_image_provider"
 _BAMBU_PRODUCT_CODE_RE = re.compile(r"(?<!\d)(\d{5})(?!\d)")
 _FILAMENT_FAMILY_NAMES = {
     "hf": "Hf",
@@ -151,6 +154,7 @@ def _filament_product_codes(filament: Filament) -> set[str]:
     values = (
         filament.designation,
         filament.manufacturer_color_name,
+        (filament.custom_fields or {}).get(ARTICLE_NUMBER_FIELD),
         (filament.custom_fields or {}).get("bambu_color_code"),
         (filament.custom_fields or {}).get("bambu_product_code"),
     )
@@ -178,65 +182,69 @@ def _canonical_catalog_candidate(candidates: list[Filament]) -> Filament:
 
 def _filament_custom_fields(data: BambuSpoolImport) -> dict:
     return {
+        ARTICLE_NUMBER_FIELD: _product_code(data.bambu_color_code),
         "bambu_material_id": data.material_id,
         "bambu_variant_id": data.variant_id,
-        "bambu_color_code": data.bambu_color_code,
-        "bambu_product_code": _product_code(data.bambu_color_code),
         "bambu_detailed_filament_type": data.detailed_filament_type,
-        "bambu_primary_rgba": data.primary_rgba,
-        "bambu_secondary_rgba": data.secondary_rgba,
         "bambu_nozzle_temperature_min_c": data.nozzle_temperature_min_c,
         "bambu_nozzle_temperature_max_c": data.nozzle_temperature_max_c,
         "bambu_bed_temperature_c": data.bed_temperature_c,
         "bambu_drying_temperature_c": data.drying_temperature_c,
         "bambu_drying_time_h": data.drying_time_h,
+        FILAMENT_IMAGE_URL_FIELD: data.product_image_url,
+        FILAMENT_IMAGE_PROVIDER_FIELD: (
+            "bambulab" if data.product_image_url else None
+        ),
     }
 
 
 def _spool_custom_fields(data: BambuSpoolImport) -> dict:
     return {
-        "bambu_tray_uuid": data.external_id,
-        "bambu_material_id": data.material_id,
-        "bambu_variant_id": data.variant_id,
-        "bambu_color_code": data.bambu_color_code,
-        "bambu_product_code": _product_code(data.bambu_color_code),
-        "bambu_color_name": data.color_name,
-        "bambu_primary_rgba": data.primary_rgba,
-        "bambu_secondary_rgba": data.secondary_rgba,
         "bambu_filament_length_m": data.filament_length_m,
         "bambu_production_date": data.production_date,
-        "bambu_nozzle_temperature_min_c": data.nozzle_temperature_min_c,
-        "bambu_nozzle_temperature_max_c": data.nozzle_temperature_max_c,
-        "bambu_bed_temperature_c": data.bed_temperature_c,
-        "bambu_drying_temperature_c": data.drying_temperature_c,
-        "bambu_drying_time_h": data.drying_time_h,
     }
 
 
 EXTRA_FIELD_DEFINITIONS = (
-    ("spool", "bambu_tray_uuid", "Bambu Tray UUID", "text"),
-    ("spool", "bambu_material_id", "Bambu Material ID", "text"),
-    ("spool", "bambu_variant_id", "Bambu Variant ID", "text"),
-    ("spool", "bambu_color_code", "Bambu Color Code", "text"),
-    ("spool", "bambu_color_name", "Bambu Color Name", "text"),
-    ("spool", "bambu_primary_rgba", "Bambu Primary RGBA", "text"),
-    ("spool", "bambu_secondary_rgba", "Bambu Secondary RGBA", "text"),
-    ("spool", "bambu_filament_length_m", "Filament Length", "number"),
-    ("spool", "bambu_production_date", "Bambu Production Date", "text"),
-    ("filament", "bambu_material_id", "Bambu Material ID", "text"),
-    ("filament", "bambu_variant_id", "Bambu Variant ID", "text"),
-    ("filament", "bambu_color_code", "Bambu Color Code", "text"),
-    ("filament", "bambu_detailed_filament_type", "Bambu Filament Type", "text"),
-    ("filament", "bambu_primary_rgba", "Bambu Primary RGBA", "text"),
-    ("filament", "bambu_secondary_rgba", "Bambu Secondary RGBA", "text"),
+    (
+        "filament",
+        ARTICLE_NUMBER_FIELD,
+        "Bambu Color Code (Article Number)",
+        "text",
+        {"max_length": 5},
+    ),
+    (
+        "spool",
+        "bambu_filament_length_m",
+        "Filament Length",
+        "number",
+        {"unit": "m", "decimal_places": 2, "min_bound": 0},
+    ),
+    (
+        "spool",
+        "bambu_production_date",
+        "Bambu Production Date",
+        "text",
+        {"max_length": 64},
+    ),
 )
 
 
 async def _ensure_extra_fields(db: AsyncSession) -> None:
     result = await db.execute(select(SystemExtraField))
-    existing = {(field.target_type, field.key) for field in result.scalars().all()}
-    for target_type, key, label, field_type in EXTRA_FIELD_DEFINITIONS:
-        if (target_type, key) not in existing:
+    fields = list(result.scalars().all())
+    desired = {
+        (target_type, key)
+        for target_type, key, _label, _field_type, _config in EXTRA_FIELD_DEFINITIONS
+    }
+    for field in fields:
+        if field.source == PLUGIN_KEY and (field.target_type, field.key) not in desired:
+            await db.delete(field)
+
+    existing = {(field.target_type, field.key): field for field in fields}
+    for target_type, key, label, field_type, config in EXTRA_FIELD_DEFINITIONS:
+        field = existing.get((target_type, key))
+        if field is None:
             db.add(
                 SystemExtraField(
                     target_type=target_type,
@@ -244,8 +252,13 @@ async def _ensure_extra_fields(db: AsyncSession) -> None:
                     label=label,
                     field_type=field_type,
                     source=PLUGIN_KEY,
+                    config=config,
                 )
             )
+        elif field.source == PLUGIN_KEY:
+            field.label = label
+            field.field_type = field_type
+            field.config = config
 
 
 async def _load_spool(db: AsyncSession, external_id: str) -> Spool | None:
@@ -395,6 +408,9 @@ def _merge_filament_metadata(filament: Filament, data: BambuSpoolImport) -> bool
     if changed:
         filament.custom_fields = fields
         flag_modified(filament, "custom_fields")
+    if data.product_image_url and filament.shop_url == data.product_image_url:
+        filament.shop_url = None
+        changed = True
     return changed
 
 
@@ -638,7 +654,7 @@ async def _resolve_color(
     color = result.scalar_one_or_none()
     if color is not None:
         return color, False
-    color = Color(name=name, hex_code=rgb, custom_fields={"bambu_rgba": rgba})
+    color = Color(name=name, hex_code=rgb)
     db.add(color)
     await db.flush()
     return color, True
@@ -679,7 +695,7 @@ async def _resolve_filament(
         manufacturer_color_name=_color_label(data),
         raw_material_weight_g=data.weight_g,
         spool_width_mm=data.spool_width_mm,
-        shop_url=data.product_image_url,
+        shop_url=None,
         color_mode="multi" if len(colors) > 1 else "single",
         multi_color_style="striped" if len(colors) > 1 else None,
         custom_fields=_filament_custom_fields(data),
@@ -727,6 +743,7 @@ async def _import_once(
     external_id: str,
     device: Device,
 ) -> tuple[ImportResponse, bool]:
+    await _ensure_extra_fields(db)
     existing = await _load_spool(db, external_id)
     if existing is not None:
         response, changed = await _resolve_existing(db, existing, data, device)
@@ -739,7 +756,6 @@ async def _import_once(
 
     await _validate_storage_location(db, data.location_id)
     status = await _resolve_status(db)
-    await _ensure_extra_fields(db)
     manufacturer, manufacturer_created = await _resolve_manufacturer(db, data)
     filament = await _find_catalog_filament(db, manufacturer.id, data)
     if filament is not None:

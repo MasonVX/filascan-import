@@ -1,6 +1,6 @@
 # FilaScan Spool Import
 
-Version 0.1.10. This directory is the installable FilaMan plugin payload.
+Version 0.1.11. This directory is the installable FilaMan plugin payload.
 
 FilaMan integration plugin providing:
 
@@ -37,6 +37,12 @@ Lab filament with the same code and material type is reused even when its
 FilamentDB display name differs. Duplicate FilamentDB rows for the same product
 are resolved deterministically in favor of the canonical FilamentDB record.
 Explicitly conflicting Bambu material or variant metadata is never merged.
+
+FilaScan shares the Bambu plugin's canonical `article_number` product-code
+field. The color name and RGB values use FilaMan's native filament/color
+records. Only `article_number`, `bambu_filament_length_m`, and
+`bambu_production_date` are registered as visible FilaScan extra fields; legacy
+definitions are removed without deleting retained record metadata.
 
 The configuration page follows the signed-in FilaMan user's English or German
 language preference and defaults to FilaScan's dark brand theme. It remains a

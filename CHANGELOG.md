@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.11] - 2026-08-30
+
+### Changed
+
+- Aligned Bambu product metadata with the Bambu Lab plugin by writing the
+  five-digit product/color code to canonical `article_number`.
+- Reduced FilaScan's visible system extra fields from fifteen to three:
+  `article_number`, `bambu_filament_length_m`, and `bambu_production_date`.
+- Kept the color name and RGB color in FilaMan's native filament/color records
+  instead of duplicating them as spool and filament extra fields.
+- Kept material and temperature/drying metadata only on the shared filament,
+  avoiding repeated copies on every physical spool.
+- Stored product images in shared `filament_image_*` metadata instead of using
+  the product-page `shop_url` field.
+
+### Compatibility
+
+- Obsolete FilaScan-owned field definitions are removed on the next scan while
+  existing record metadata remains intact.
+- Legacy `bambu_color_code` and `bambu_product_code` values remain accepted for
+  matching existing records.
+
 ## [0.1.10] - 2026-08-22
 
 ### Added

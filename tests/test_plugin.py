@@ -204,7 +204,7 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
             {
                 "status": "ready",
                 "plugin": "filascan_import",
-                "version": "0.1.10",
+                "version": "0.1.11",
                 "device_id": 1,
                 "bambu_import": True,
                 "location_selection": True,
@@ -737,28 +737,155 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
                 "spools": await db.scalar(select(func.count()).select_from(Spool)),
             }
             spool = (await db.execute(select(Spool))).scalar_one()
+            filament = (await db.execute(select(Filament))).scalar_one()
+            color = (await db.execute(select(Color))).scalar_one()
+            extra_fields = list(
+                (
+                    await db.execute(
+                        select(SystemExtraField).order_by(
+                            SystemExtraField.target_type,
+                            SystemExtraField.key,
+                        )
+                    )
+                ).scalars()
+            )
         self.assertEqual(
             counts,
             {"manufacturers": 1, "colors": 1, "filaments": 1, "spools": 1},
         )
         self.assertEqual(spool.external_id, f"bambulab:{TRAY_UUID}")
         self.assertIsNone(spool.rfid_uid)
-        self.assertEqual(spool.custom_fields["bambu_tray_uuid"], TRAY_UUID)
+        self.assertEqual(
+            spool.custom_fields,
+            {
+                "bambu_filament_length_m": 330.0,
+                "bambu_production_date": "2025_03_15_09_34",
+            },
+        )
+        self.assertEqual(filament.custom_fields["article_number"], "13109")
+        self.assertEqual(filament.custom_fields["bambu_material_id"], "GFA06")
+        self.assertEqual(filament.custom_fields["bambu_variant_id"], "A06-D1")
+        self.assertEqual(
+            filament.custom_fields["filament_image_url"],
+            "https://store.bblcdn.eu/example.png",
+        )
+        self.assertEqual(
+            filament.custom_fields["filament_image_provider"], "bambulab"
+        )
+        self.assertIsNone(filament.shop_url)
+        for redundant_key in (
+            "bambu_color_code",
+            "bambu_product_code",
+            "bambu_primary_rgba",
+            "bambu_secondary_rgba",
+        ):
+            self.assertNotIn(redundant_key, filament.custom_fields)
+        self.assertEqual(color.name, "Silver")
+        self.assertIsNone(color.custom_fields)
+        self.assertEqual(
+            [
+                (
+                    field.target_type,
+                    field.key,
+                    field.label,
+                    field.source,
+                    field.config,
+                )
+                for field in extra_fields
+            ],
+            [
+                (
+                    "filament",
+                    "article_number",
+                    "Bambu Color Code (Article Number)",
+                    "filascan_import",
+                    {"max_length": 5},
+                ),
+                (
+                    "spool",
+                    "bambu_filament_length_m",
+                    "Filament Length",
+                    "filascan_import",
+                    {"unit": "m", "decimal_places": 2, "min_bound": 0},
+                ),
+                (
+                    "spool",
+                    "bambu_production_date",
+                    "Bambu Production Date",
+                    "filascan_import",
+                    {"max_length": 64},
+                ),
+            ],
+        )
+
+    async def test_extra_field_migration_removes_only_obsolete_owned_definitions(self):
+        first = await self.import_request()
+        self.assertEqual(first.status_code, 201)
+
+        async with self.sessions() as db:
+            current = list((await db.execute(select(SystemExtraField))).scalars())
+            for field in current:
+                await db.delete(field)
+            await db.flush()
+            db.add_all(
+                [
+                    SystemExtraField(
+                        target_type="spool",
+                        key="bambu_tray_uuid",
+                        label="Bambu Tray UUID",
+                        field_type="text",
+                        source="filascan_import",
+                    ),
+                    SystemExtraField(
+                        target_type="filament",
+                        key="article_number",
+                        label="Manufacturer Article Number",
+                        field_type="text",
+                        source="bambulab",
+                    ),
+                ]
+            )
+            await db.commit()
+
+        response = await self.import_request()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "existing")
+
+        async with self.sessions() as db:
+            fields = list(
+                (
+                    await db.execute(
+                        select(SystemExtraField).order_by(
+                            SystemExtraField.target_type,
+                            SystemExtraField.key,
+                        )
+                    )
+                ).scalars()
+            )
+        self.assertEqual(
+            [(field.target_type, field.key, field.source) for field in fields],
+            [
+                ("filament", "article_number", "bambulab"),
+                ("spool", "bambu_filament_length_m", "filascan_import"),
+                ("spool", "bambu_production_date", "filascan_import"),
+            ],
+        )
+        self.assertEqual(fields[0].label, "Manufacturer Article Number")
 
     async def test_reuses_existing_filamentdb_product_by_bambu_color_code(self):
         async with self.sessions() as db:
             manufacturer = Manufacturer(name="Bambu Lab")
-            color = Color(name="Grass Green (11500)", hex_code="#61C680")
+            color = Color(name="Grass Green", hex_code="#61C680")
             db.add_all([manufacturer, color])
             await db.flush()
             catalog = Filament(
                 manufacturer_id=manufacturer.id,
-                designation="Matte - Grass Green (11500)",
-                manufacturer_color_name="Grass Green (11500)",
+                designation="Matte - Grass Green",
+                manufacturer_color_name="Grass Green",
                 material_type="PLA",
                 material_subgroup="matte",
                 diameter_mm=1.75,
-                custom_fields={"filamentdb_id": 149},
+                custom_fields={"filamentdb_id": 149, "article_number": "11500"},
             )
             db.add(catalog)
             await db.flush()
@@ -793,8 +920,36 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await db.scalar(select(func.count()).select_from(Color)), 1)
             enriched = await db.get(Filament, catalog_id)
         self.assertEqual(enriched.custom_fields["filamentdb_id"], 149)
-        self.assertEqual(enriched.custom_fields["bambu_color_code"], "11500")
+        self.assertEqual(enriched.custom_fields["article_number"], "11500")
+        self.assertNotIn("bambu_color_code", enriched.custom_fields)
         self.assertEqual(enriched.custom_fields["bambu_material_id"], "GFA01")
+
+    async def test_legacy_image_in_shop_url_moves_to_shared_image_metadata(self):
+        payload = spool_payload(product_image_url=None)
+        first = await self.import_request(payload)
+        image_url = "https://store.bblcdn.eu/example.png"
+        async with self.sessions() as db:
+            filament = await db.get(Filament, first.json()["filament_id"])
+            filament.shop_url = image_url
+            fields = dict(filament.custom_fields or {})
+            fields.pop("filament_image_url", None)
+            fields.pop("filament_image_provider", None)
+            filament.custom_fields = fields
+            await db.commit()
+
+        second = await self.import_request(
+            spool_payload(product_image_url=image_url)
+        )
+
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.json()["status"], "updated")
+        async with self.sessions() as db:
+            filament = await db.get(Filament, first.json()["filament_id"])
+        self.assertIsNone(filament.shop_url)
+        self.assertEqual(filament.custom_fields["filament_image_url"], image_url)
+        self.assertEqual(
+            filament.custom_fields["filament_image_provider"], "bambulab"
+        )
 
     async def test_unknown_pla_pure_uses_filamentdb_style_fallback(self):
         response = await self.import_request(
@@ -817,11 +972,12 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(filament.manufacturer_color_name, "Pure White (17100)")
         self.assertEqual(filament.material_subgroup, "pure")
         self.assertIsNone(filament.shop_url)
-        self.assertEqual(filament.custom_fields["bambu_product_code"], "17100")
+        self.assertEqual(filament.custom_fields["article_number"], "17100")
+        self.assertNotIn("bambu_product_code", filament.custom_fields)
 
         async with self.sessions() as db:
             spool = await db.get(Spool, response.json()["spool_id"])
-        self.assertEqual(spool.custom_fields["bambu_product_code"], "17100")
+        self.assertNotIn("bambu_product_code", spool.custom_fields)
 
     async def test_repeat_scan_migrates_exact_legacy_fallback_name(self):
         payload = spool_payload(
@@ -1034,9 +1190,12 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["status"], "updated")
         async with self.sessions() as db:
             spool = await db.get(Spool, first.json()["spool_id"])
+            filament = await db.get(Filament, spool.filament_id)
         self.assertEqual(spool.remaining_weight_g, 412)
         self.assertEqual(spool.custom_fields["user_note"], "keep")
-        self.assertEqual(spool.custom_fields["bambu_material_id"], "GFA06")
+        self.assertNotIn("bambu_material_id", spool.custom_fields)
+        self.assertEqual(filament.custom_fields["bambu_material_id"], "GFA06")
+        self.assertEqual(filament.custom_fields["article_number"], "13109")
 
     async def test_incompatible_existing_identity_returns_409(self):
         await self.import_request()
@@ -1162,7 +1321,7 @@ class PluginPackageTests(unittest.TestCase):
         plugin_dir = Path(__file__).resolve().parents[1] / "filascan_import"
         manifest = json.loads((plugin_dir / "plugin.json").read_text())
         self.assertEqual(manifest["plugin_key"], "filascan_import")
-        self.assertEqual(manifest["version"], "0.1.10")
+        self.assertEqual(manifest["version"], "0.1.11")
         self.assertEqual(
             manifest["homepage"], "https://github.com/MasonVX/filascan-import"
         )
@@ -1223,7 +1382,7 @@ class PluginPackageTests(unittest.TestCase):
                 text=True,
             )
 
-            archive_path = output_dir / "filascan-import-0.1.10.zip"
+            archive_path = output_dir / "filascan-import-0.1.11.zip"
             checksum_path = archive_path.with_suffix(".zip.sha256")
             self.assertTrue(archive_path.is_file())
             self.assertTrue(checksum_path.is_file())
