@@ -204,7 +204,7 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
             {
                 "status": "ready",
                 "plugin": "filascan_import",
-                "version": "0.1.11",
+                "version": "0.1.12",
                 "device_id": 1,
                 "bambu_import": True,
                 "location_selection": True,
@@ -758,6 +758,7 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             spool.custom_fields,
             {
+                "article_number": "13109",
                 "bambu_filament_length_m": 330.0,
                 "bambu_production_date": "2025_03_15_09_34",
             },
@@ -796,6 +797,13 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
             [
                 (
                     "filament",
+                    "article_number",
+                    "Bambu Color Code (Article Number)",
+                    "filascan_import",
+                    {"max_length": 5},
+                ),
+                (
+                    "spool",
                     "article_number",
                     "Bambu Color Code (Article Number)",
                     "filascan_import",
@@ -866,6 +874,7 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
             [(field.target_type, field.key, field.source) for field in fields],
             [
                 ("filament", "article_number", "bambulab"),
+                ("spool", "article_number", "filascan_import"),
                 ("spool", "bambu_filament_length_m", "filascan_import"),
                 ("spool", "bambu_production_date", "filascan_import"),
             ],
@@ -1193,6 +1202,7 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
             filament = await db.get(Filament, spool.filament_id)
         self.assertEqual(spool.remaining_weight_g, 412)
         self.assertEqual(spool.custom_fields["user_note"], "keep")
+        self.assertEqual(spool.custom_fields["article_number"], "13109")
         self.assertNotIn("bambu_material_id", spool.custom_fields)
         self.assertEqual(filament.custom_fields["bambu_material_id"], "GFA06")
         self.assertEqual(filament.custom_fields["article_number"], "13109")
@@ -1321,7 +1331,7 @@ class PluginPackageTests(unittest.TestCase):
         plugin_dir = Path(__file__).resolve().parents[1] / "filascan_import"
         manifest = json.loads((plugin_dir / "plugin.json").read_text())
         self.assertEqual(manifest["plugin_key"], "filascan_import")
-        self.assertEqual(manifest["version"], "0.1.11")
+        self.assertEqual(manifest["version"], "0.1.12")
         self.assertEqual(
             manifest["homepage"], "https://github.com/MasonVX/filascan-import"
         )
@@ -1382,7 +1392,7 @@ class PluginPackageTests(unittest.TestCase):
                 text=True,
             )
 
-            archive_path = output_dir / "filascan-import-0.1.11.zip"
+            archive_path = output_dir / "filascan-import-0.1.12.zip"
             checksum_path = archive_path.with_suffix(".zip.sha256")
             self.assertTrue(archive_path.is_file())
             self.assertTrue(checksum_path.is_file())

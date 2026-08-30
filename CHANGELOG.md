@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.12] - 2026-08-30
+
+### Fixed
+
+- Registered `article_number` for spools as well as filaments so FilaMan's
+  spool detail page displays the Bambu color/product code.
+- Mirrored the authoritative filament article number into new and rescanned
+  spools only when the spool field is empty.
+
 ## [0.1.11] - 2026-08-30
 
 ### Changed

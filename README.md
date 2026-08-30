@@ -9,7 +9,7 @@ from an authorized FilaScan device. FilaScan only needs its existing Device toke
 the plugin performs the narrowly scoped inventory transaction without granting
 generic manufacturer, color, filament or spool CRUD scopes.
 
-Current plugin version: **0.1.11**
+Current plugin version: **0.1.12**
 
 ## Features
 
@@ -118,7 +118,8 @@ same metadata contract as the Bambu Lab plugin:
 
 | Field | Target | Purpose |
 |---|---|---|
-| `article_number` | Filament | Visible five-digit Bambu color/product code. |
+| `article_number` | Filament | Canonical five-digit Bambu color/product code. |
+| `article_number` | Spool | Display mirror so the code is visible on FilaMan's spool detail page. |
 | `bambu_filament_length_m` | Spool | Visible source filament length in metres. |
 | `bambu_production_date` | Spool | Visible Bambu production timestamp. |
 
@@ -129,7 +130,9 @@ on the shared filament record for integration compatibility but are not
 registered as additional visible fields. Physical RFID-chip fields remain
 owned exclusively by the Bambu Lab plugin.
 
-Upgrading from 0.1.10 removes obsolete FilaScan-owned field definitions on the
+The filament value remains authoritative; FilaScan fills an empty spool mirror
+without overwriting an existing spool value. Upgrading from 0.1.10 removes
+obsolete FilaScan-owned field definitions on the
 next scan while retaining existing record data. Legacy `bambu_color_code` and
 `bambu_product_code` values remain readable, but new imports write only the
 canonical `article_number`.
