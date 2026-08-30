@@ -200,7 +200,6 @@ def _filament_custom_fields(data: BambuSpoolImport) -> dict:
 
 def _spool_custom_fields(data: BambuSpoolImport) -> dict:
     return {
-        ARTICLE_NUMBER_FIELD: _product_code(data.bambu_color_code),
         "bambu_filament_length_m": data.filament_length_m,
         "bambu_production_date": data.production_date,
     }
@@ -209,13 +208,6 @@ def _spool_custom_fields(data: BambuSpoolImport) -> dict:
 EXTRA_FIELD_DEFINITIONS = (
     (
         "filament",
-        ARTICLE_NUMBER_FIELD,
-        "Bambu Color Code (Article Number)",
-        "text",
-        {"max_length": 5},
-    ),
-    (
-        "spool",
         ARTICLE_NUMBER_FIELD,
         "Bambu Color Code (Article Number)",
         "text",

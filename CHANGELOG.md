@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.13] - 2026-08-30
+
+### Changed
+
+- Removed the short-lived spool-level `article_number` mirror. The canonical
+  product/color code is stored only once on the shared filament again.
+- Kept existing spool custom-field values untouched; no data cleanup migration
+  is performed.
+
 ## [0.1.12] - 2026-08-30
 
 ### Fixed
