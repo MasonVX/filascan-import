@@ -16,6 +16,7 @@ from .schemas import (
     ImportResponse,
     MoveLocationRequest,
     MoveLocationResponse,
+    OpenPrintTagSpoolImport,
     StatusResponse,
 )
 from .service import (
@@ -27,6 +28,7 @@ from .service import (
     StorageLocationNotFound,
     archive_spool,
     import_bambu_spool,
+    import_openprinttag_spool,
     move_spool_location,
 )
 
@@ -36,7 +38,7 @@ router = APIRouter(prefix="/devices/filascan", tags=["FilaScan Spool Import"])
 
 
 def _validate_spool_type(spool_type: str | None) -> None:
-    if spool_type != "bambu":
+    if spool_type not in {"bambu", "openprinttag"}:
         display = spool_type if spool_type else "<missing>"
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -163,25 +165,38 @@ async def archive_existing_spool(
 
 @router.post("/import-spool", response_model=ImportResponse)
 async def import_spool(
-    payload: BambuSpoolImport,
+    payload: BambuSpoolImport | OpenPrintTagSpoolImport,
     response: Response,
     db: DBSession,
     device: AuthorizedFilaScanDevice,
     spool_type: str | None = Query(default=None, alias="type"),
 ):
     _validate_spool_type(spool_type)
+    if spool_type == "bambu" and not isinstance(payload, BambuSpoolImport):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "invalid_payload", "message": "Expected a Bambu spool payload"},
+        )
+    if spool_type == "openprinttag" and not isinstance(payload, OpenPrintTagSpoolImport):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "invalid_payload", "message": "Expected an OpenPrintTag spool payload"},
+        )
     device_id = device.id
     logger.info(
-        "FilaScan import requested device_id=%s type=%s external_id=bambulab:%s",
+        "FilaScan import requested device_id=%s type=%s source_id=%s",
         device_id,
         spool_type,
         payload.external_id,
     )
     try:
-        result = await import_bambu_spool(db, payload, device)
+        if isinstance(payload, BambuSpoolImport):
+            result = await import_bambu_spool(db, payload, device)
+        else:
+            result = await import_openprinttag_spool(db, payload, device)
     except ImportConflict as exc:
         logger.warning(
-            "FilaScan import conflict device_id=%s external_id=bambulab:%s",
+            "FilaScan import conflict device_id=%s source_id=%s",
             device_id,
             payload.external_id,
         )
@@ -191,7 +206,7 @@ async def import_spool(
         ) from exc
     except InvalidStorageLocation as exc:
         logger.warning(
-            "FilaScan import rejected invalid location device_id=%s external_id=bambulab:%s location_id=%s",
+            "FilaScan import rejected invalid location device_id=%s source_id=%s location_id=%s",
             device_id,
             payload.external_id,
             payload.location_id,
@@ -202,7 +217,7 @@ async def import_spool(
         ) from exc
     except ImportUnavailable as exc:
         logger.error(
-            "FilaScan import unavailable device_id=%s external_id=bambulab:%s",
+            "FilaScan import unavailable device_id=%s source_id=%s",
             device_id,
             payload.external_id,
         )
@@ -213,7 +228,7 @@ async def import_spool(
     except Exception as exc:
         await db.rollback()
         logger.exception(
-            "FilaScan import failed device_id=%s type=%s external_id=bambulab:%s",
+            "FilaScan import failed device_id=%s type=%s source_id=%s",
             device_id,
             spool_type,
             payload.external_id,

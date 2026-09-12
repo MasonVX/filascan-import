@@ -1,6 +1,6 @@
 # FilaScan Spool Import
 
-Version 0.1.13. This directory is the installable FilaMan plugin payload.
+Version 0.2.0. This directory is the installable FilaMan plugin payload.
 
 FilaMan integration plugin providing:
 

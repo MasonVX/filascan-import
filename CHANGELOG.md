@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.0] - 2026-09-12
+
+### Added
+
+- Idempotent OpenPrintTag spool import through `type=openprinttag`.
+- Separate OpenPrintTag instance identity and source metadata fields.
+- Reuse of the existing FilaScan location selection, movement, archival and
+  restoration workflow for OpenPrintTag spools.
+
 ## [0.1.13] - 2026-08-30
 
 ### Changed

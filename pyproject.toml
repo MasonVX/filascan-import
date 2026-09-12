@@ -1,6 +1,6 @@
 [project]
 name = "filascan-import"
-version = "0.1.13"
+version = "0.2.0"
 description = "FilaMan integration plugin for importing decoded FilaScan spool data"
 readme = "README.md"
 requires-python = ">=3.11"

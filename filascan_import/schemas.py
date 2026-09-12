@@ -1,6 +1,7 @@
 """Validated wire format for FilaScan spool imports."""
 
 from typing import Literal
+from uuid import UUID
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -109,6 +110,70 @@ class BambuSpoolImport(BaseModel):
         return value
 
 
+class OpenPrintTagSpoolImport(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    location_id: int = Field(gt=0)
+    external_id: str = Field(min_length=36, max_length=36)
+    manufacturer: str = Field(min_length=1, max_length=255)
+    material_type: str = Field(min_length=1, max_length=50)
+    material_name: str = Field(min_length=1, max_length=255)
+    color_name: str = Field(min_length=1, max_length=100)
+    primary_rgba: str
+    secondary_rgba: str | None = None
+    product_url: str | None = Field(default=None, max_length=500)
+    weight_g: float | None = Field(default=None, gt=0, le=100_000)
+    remaining_weight_g: float | None = Field(default=None, ge=0, le=100_000)
+    empty_container_weight_g: float | None = Field(default=None, ge=0, le=100_000)
+    diameter_mm: float | None = Field(default=None, gt=0, le=5)
+    filament_length_m: float | None = Field(default=None, gt=0, le=1_000_000)
+    nozzle_temperature_min_c: float | None = Field(default=None, gt=0, le=500)
+    nozzle_temperature_max_c: float | None = Field(default=None, gt=0, le=500)
+    bed_temperature_min_c: float | None = Field(default=None, gt=0, le=500)
+    bed_temperature_max_c: float | None = Field(default=None, gt=0, le=500)
+    drying_temperature_c: float | None = Field(default=None, gt=0, le=500)
+    drying_time_h: float | None = Field(default=None, gt=0, le=1_000)
+    brand_uuid: str | None = Field(default=None, max_length=36)
+    material_uuid: str | None = Field(default=None, max_length=36)
+    gtin: int | None = Field(default=None, ge=0)
+
+    @field_validator("external_id")
+    @classmethod
+    def validate_external_id(cls, value: str) -> str:
+        parsed = UUID(value)
+        if parsed.int == 0:
+            raise ValueError("all-zero instance UUID is not a spool identity")
+        return str(parsed)
+
+    @field_validator("brand_uuid", "material_uuid")
+    @classmethod
+    def validate_optional_uuid(cls, value: str | None) -> str | None:
+        return None if not value else str(UUID(value))
+
+    @field_validator("primary_rgba", "secondary_rgba")
+    @classmethod
+    def validate_rgba(cls, value: str | None) -> str | None:
+        return None if value is None else _normalize_rgba(value)
+
+    @field_validator("product_url")
+    @classmethod
+    def validate_product_url(cls, value: str | None) -> str | None:
+        if value is None or not value:
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("must be an absolute HTTP(S) URL")
+        return value
+
+    @field_validator("nozzle_temperature_max_c", "bed_temperature_max_c")
+    @classmethod
+    def validate_temperature_range(cls, value: float | None, info):
+        minimum_key = info.field_name.replace("max", "min")
+        minimum = info.data.get(minimum_key)
+        if value is not None and minimum is not None and value < minimum:
+            raise ValueError(f"must be greater than or equal to {minimum_key}")
+        return value
+
 class ImportResponse(BaseModel):
     status: Literal["created", "existing", "updated"]
     spool_id: int
@@ -125,6 +190,7 @@ class StatusResponse(BaseModel):
     version: str
     device_id: int
     bambu_import: Literal[True] = True
+    openprinttag_import: Literal[True] = True
     location_selection: Literal[True] = True
     location_management: Literal[True] = True
     spool_archiving: Literal[True] = True

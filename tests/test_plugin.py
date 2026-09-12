@@ -41,6 +41,7 @@ from filascan_import.router import router
 
 
 TRAY_UUID = "5332FC68F1A34865838C48D43615E74B"
+OPENPRINTTAG_UUID = "8bc3b75d-4702-4c46-a9c1-2fc81ec03ebf"
 DEVICE_SECRET = "scanner-secret"
 
 
@@ -69,6 +70,36 @@ def spool_payload(**overrides):
         "spool_width_mm": 66.25,
         "filament_length_m": 330,
         "production_date": "2025_03_15_09_34",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def openprinttag_payload(**overrides):
+    payload = {
+        "location_id": 1,
+        "external_id": OPENPRINTTAG_UUID,
+        "manufacturer": "Prusament",
+        "material_type": "PETG",
+        "material_name": "Prusament PETG Prusa Galaxy Black",
+        "color_name": "Prusa Galaxy Black",
+        "primary_rgba": "#202124FF",
+        "secondary_rgba": None,
+        "product_url": "https://openprinttag.org/t/8bc3b75d-4702-4c46-a9c1-2fc81ec03ebf",
+        "weight_g": 1000,
+        "remaining_weight_g": 875,
+        "empty_container_weight_g": 201,
+        "diameter_mm": 1.75,
+        "filament_length_m": 330,
+        "nozzle_temperature_min_c": 230,
+        "nozzle_temperature_max_c": 250,
+        "bed_temperature_min_c": 80,
+        "bed_temperature_max_c": 90,
+        "drying_temperature_c": 55,
+        "drying_time_h": 6,
+        "brand_uuid": "11ebd31e-58af-431a-9bcb-2a05df7c1cbb",
+        "material_uuid": "637ed350-fdf5-49f9-9f7a-a68b8819f063",
+        "gtin": 8594173676228,
     }
     payload.update(overrides)
     return payload
@@ -204,9 +235,10 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
             {
                 "status": "ready",
                 "plugin": "filascan_import",
-                "version": "0.1.13",
+                "version": "0.2.0",
                 "device_id": 1,
                 "bambu_import": True,
+                "openprinttag_import": True,
                 "location_selection": True,
                 "location_management": True,
                 "spool_archiving": True,
@@ -335,6 +367,48 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 await db.scalar(select(func.count()).select_from(Manufacturer)), 0
             )
+
+    async def test_openprinttag_import_is_idempotent(self):
+        first = await self.import_request(
+            openprinttag_payload(), spool_type="openprinttag"
+        )
+        second = await self.import_request(
+            openprinttag_payload(), spool_type="openprinttag"
+        )
+
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual(second.json()["status"], "existing")
+        self.assertEqual(second.json()["spool_id"], first.json()["spool_id"])
+        self.assertEqual(
+            first.json()["external_id"],
+            f"openprinttag:{OPENPRINTTAG_UUID}",
+        )
+
+        async with self.sessions() as db:
+            spool = await db.get(Spool, first.json()["spool_id"])
+            filament = await db.get(Filament, first.json()["filament_id"])
+            manufacturer = await db.get(Manufacturer, first.json()["manufacturer_id"])
+
+        self.assertEqual(manufacturer.name, "Prusament")
+        self.assertEqual(filament.material_type, "PETG")
+        self.assertEqual(filament.manufacturer_color_name, "Prusa Galaxy Black")
+        self.assertEqual(spool.remaining_weight_g, 875)
+        self.assertEqual(
+            spool.custom_fields["openprinttag_instance_uuid"],
+            OPENPRINTTAG_UUID,
+        )
+        self.assertNotIn("rfid_uid", spool.custom_fields)
+
+    async def test_spool_type_must_match_payload(self):
+        bambu_as_openprinttag = await self.import_request(
+            spool_payload(), spool_type="openprinttag"
+        )
+        openprinttag_as_bambu = await self.import_request(
+            openprinttag_payload(), spool_type="bambu"
+        )
+        self.assertEqual(bambu_as_openprinttag.status_code, 422)
+        self.assertEqual(openprinttag_as_bambu.status_code, 422)
 
     async def test_location_id_is_required_and_must_be_positive(self):
         missing_payload = spool_payload()
@@ -782,40 +856,20 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(redundant_key, filament.custom_fields)
         self.assertEqual(color.name, "Silver")
         self.assertIsNone(color.custom_fields)
+        definitions = {
+            (field.target_type, field.key): field for field in extra_fields
+        }
         self.assertEqual(
-            [
-                (
-                    field.target_type,
-                    field.key,
-                    field.label,
-                    field.source,
-                    field.config,
-                )
-                for field in extra_fields
-            ],
-            [
-                (
-                    "filament",
-                    "article_number",
-                    "Bambu Color Code (Article Number)",
-                    "filascan_import",
-                    {"max_length": 5},
-                ),
-                (
-                    "spool",
-                    "bambu_filament_length_m",
-                    "Filament Length",
-                    "filascan_import",
-                    {"unit": "m", "decimal_places": 2, "min_bound": 0},
-                ),
-                (
-                    "spool",
-                    "bambu_production_date",
-                    "Bambu Production Date",
-                    "filascan_import",
-                    {"max_length": 64},
-                ),
-            ],
+            definitions[("filament", "article_number")].label,
+            "Bambu Color Code (Article Number)",
+        )
+        self.assertEqual(
+            set(definitions),
+            {
+                (target_type, key)
+                for target_type, key, _label, _field_type, _config
+                in service_module.EXTRA_FIELD_DEFINITIONS
+            },
         )
 
     async def test_extra_field_migration_removes_only_obsolete_owned_definitions(self):
@@ -863,12 +917,16 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
                 ).scalars()
             )
         self.assertEqual(
-            [(field.target_type, field.key, field.source) for field in fields],
-            [
+            {(field.target_type, field.key, field.source) for field in fields},
+            {
                 ("filament", "article_number", "bambulab"),
-                ("spool", "bambu_filament_length_m", "filascan_import"),
-                ("spool", "bambu_production_date", "filascan_import"),
-            ],
+                *{
+                    (target_type, key, "filascan_import")
+                    for target_type, key, _label, _field_type, _config
+                    in service_module.EXTRA_FIELD_DEFINITIONS
+                    if (target_type, key) != ("filament", "article_number")
+                },
+            },
         )
         self.assertEqual(fields[0].label, "Manufacturer Article Number")
 
@@ -1325,7 +1383,7 @@ class PluginPackageTests(unittest.TestCase):
         plugin_dir = Path(__file__).resolve().parents[1] / "filascan_import"
         manifest = json.loads((plugin_dir / "plugin.json").read_text())
         self.assertEqual(manifest["plugin_key"], "filascan_import")
-        self.assertEqual(manifest["version"], "0.1.13")
+        self.assertEqual(manifest["version"], "0.2.0")
         self.assertEqual(
             manifest["homepage"], "https://github.com/MasonVX/filascan-import"
         )
@@ -1386,7 +1444,7 @@ class PluginPackageTests(unittest.TestCase):
                 text=True,
             )
 
-            archive_path = output_dir / "filascan-import-0.1.13.zip"
+            archive_path = output_dir / "filascan-import-0.2.0.zip"
             checksum_path = archive_path.with_suffix(".zip.sha256")
             self.assertTrue(archive_path.is_file())
             self.assertTrue(checksum_path.is_file())

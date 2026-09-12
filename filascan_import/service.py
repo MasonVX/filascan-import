@@ -31,12 +31,14 @@ from .schemas import (
     BambuSpoolImport,
     ImportResponse,
     MoveLocationResponse,
+    OpenPrintTagSpoolImport,
 )
 
 
 logger = logging.getLogger(__name__)
 PLUGIN_KEY = "filascan_import"
 BAMBU_EXTERNAL_ID_PREFIX = "bambulab:"
+OPENPRINTTAG_EXTERNAL_ID_PREFIX = "openprinttag:"
 ARTICLE_NUMBER_FIELD = "article_number"
 FILAMENT_IMAGE_URL_FIELD = "filament_image_url"
 FILAMENT_IMAGE_PROVIDER_FIELD = "filament_image_provider"
@@ -80,6 +82,10 @@ class ImportResult:
 
 def canonical_external_id(tray_uuid: str) -> str:
     return f"{BAMBU_EXTERNAL_ID_PREFIX}{tray_uuid.upper()}"
+
+
+def canonical_openprinttag_external_id(instance_uuid: str) -> str:
+    return f"{OPENPRINTTAG_EXTERNAL_ID_PREFIX}{instance_uuid.lower()}"
 
 
 def _legacy_filament_designation(data: BambuSpoolImport) -> str:
@@ -226,6 +232,48 @@ EXTRA_FIELD_DEFINITIONS = (
         "Bambu Production Date",
         "text",
         {"max_length": 64},
+    ),
+    (
+        "filament",
+        "openprinttag_material_uuid",
+        "OpenPrintTag Material UUID",
+        "text",
+        {"max_length": 36},
+    ),
+    (
+        "filament",
+        "openprinttag_brand_uuid",
+        "OpenPrintTag Brand UUID",
+        "text",
+        {"max_length": 36},
+    ),
+    (
+        "filament",
+        "openprinttag_gtin",
+        "GTIN",
+        "text",
+        {"max_length": 20},
+    ),
+    (
+        "spool",
+        "openprinttag_instance_uuid",
+        "OpenPrintTag Instance UUID",
+        "text",
+        {"max_length": 36},
+    ),
+    (
+        "spool",
+        "openprinttag_empty_container_weight_g",
+        "Empty Container Weight",
+        "number",
+        {"unit": "g", "decimal_places": 2, "min_bound": 0},
+    ),
+    (
+        "spool",
+        "openprinttag_filament_length_m",
+        "Filament Length",
+        "number",
+        {"unit": "m", "decimal_places": 2, "min_bound": 0},
     ),
 )
 
@@ -844,6 +892,240 @@ async def import_bambu_spool(
             await db.rollback()
             raise
     raise RuntimeError("FilaScan import retry exhausted")
+
+
+def _openprinttag_filament_fields(data: OpenPrintTagSpoolImport) -> dict:
+    return {
+        "openprinttag_brand_uuid": data.brand_uuid,
+        "openprinttag_material_uuid": data.material_uuid,
+        "openprinttag_gtin": str(data.gtin) if data.gtin is not None else None,
+        "openprinttag_nozzle_temperature_min_c": data.nozzle_temperature_min_c,
+        "openprinttag_nozzle_temperature_max_c": data.nozzle_temperature_max_c,
+        "openprinttag_bed_temperature_min_c": data.bed_temperature_min_c,
+        "openprinttag_bed_temperature_max_c": data.bed_temperature_max_c,
+        "openprinttag_drying_temperature_c": data.drying_temperature_c,
+        "openprinttag_drying_time_h": data.drying_time_h,
+    }
+
+
+def _openprinttag_spool_fields(data: OpenPrintTagSpoolImport) -> dict:
+    return {
+        "openprinttag_instance_uuid": data.external_id,
+        "openprinttag_empty_container_weight_g": data.empty_container_weight_g,
+        "openprinttag_filament_length_m": data.filament_length_m,
+    }
+
+
+def _openprinttag_response(
+    spool: Spool, data: OpenPrintTagSpoolImport, status: str
+) -> ImportResponse:
+    return ImportResponse(
+        status=status,
+        spool_id=spool.id,
+        filament_id=spool.filament_id,
+        manufacturer_id=spool.filament.manufacturer_id,
+        color_ids=_ordered_color_ids(spool.filament),
+        external_id=spool.external_id
+        or canonical_openprinttag_external_id(data.external_id),
+        tray_uuid=data.external_id,
+    )
+
+
+def _assert_openprinttag_compatible(
+    spool: Spool, data: OpenPrintTagSpoolImport
+) -> None:
+    filament = spool.filament
+    if filament.manufacturer.name.casefold() != data.manufacturer.casefold():
+        raise ImportConflict(
+            "Existing spool belongs to an incompatible manufacturer"
+        )
+    if filament.material_type.casefold() != data.material_type.casefold():
+        raise ImportConflict("Existing spool belongs to an incompatible material type")
+    expected = [_rgb(data.primary_rgba)]
+    if data.secondary_rgba:
+        expected.append(_rgb(data.secondary_rgba))
+    existing = [
+        item.color.hex_code.upper()
+        for item in sorted(filament.filament_colors, key=lambda item: item.position)
+        if item.color is not None
+    ]
+    if existing and existing != expected:
+        raise ImportConflict("Existing spool has incompatible ordered colors")
+
+
+async def _resolve_openprinttag_existing(
+    db: AsyncSession,
+    spool: Spool,
+    data: OpenPrintTagSpoolImport,
+    device: Device,
+) -> tuple[ImportResponse, bool]:
+    _assert_openprinttag_compatible(spool, data)
+    changed = False
+    filament_fields, filament_changed = _merge_missing(
+        spool.filament.custom_fields, _openprinttag_filament_fields(data)
+    )
+    if filament_changed:
+        spool.filament.custom_fields = filament_fields
+        flag_modified(spool.filament, "custom_fields")
+        changed = True
+    spool_fields, spool_changed = _merge_missing(
+        spool.custom_fields, _openprinttag_spool_fields(data)
+    )
+    if spool_changed:
+        spool.custom_fields = spool_fields
+        flag_modified(spool, "custom_fields")
+        changed = True
+    if data.product_url and not spool.filament.shop_url:
+        spool.filament.shop_url = data.product_url
+        changed = True
+
+    archived_status = await _get_status_by_key(db, "archived")
+    if archived_status is not None and spool.status_id == archived_status.id:
+        active_status = await _resolve_status(db)
+        await SpoolService(db).change_status(
+            spool=spool,
+            status_key=active_status.key,
+            event_at=datetime.now(timezone.utc),
+            principal=_device_principal(device),
+            source="filascan",
+            note=f"Restored by FilaScan device {device.name}",
+        )
+        changed = True
+    return _openprinttag_response(
+        spool, data, "updated" if changed else "existing"
+    ), changed
+
+
+async def _resolve_openprinttag_filament(
+    db: AsyncSession,
+    manufacturer: Manufacturer,
+    colors: list[Color],
+    data: OpenPrintTagSpoolImport,
+) -> tuple[Filament, bool]:
+    result = await db.execute(
+        select(Filament)
+        .where(
+            Filament.manufacturer_id == manufacturer.id,
+            func.lower(Filament.designation) == data.material_name.casefold(),
+            func.lower(Filament.material_type) == data.material_type.casefold(),
+        )
+        .options(selectinload(Filament.filament_colors))
+    )
+    matches = list(result.scalars().unique().all())
+    if len(matches) > 1:
+        raise ImportConflict("Multiple filaments match the OpenPrintTag identity")
+    if matches:
+        filament = matches[0]
+        if _ordered_color_ids(filament) != [color.id for color in colors]:
+            raise ImportConflict("Existing filament has incompatible ordered colors")
+        return filament, False
+
+    filament = Filament(
+        manufacturer_id=manufacturer.id,
+        designation=data.material_name,
+        material_type=data.material_type.upper(),
+        diameter_mm=data.diameter_mm,
+        manufacturer_color_name=data.color_name,
+        raw_material_weight_g=data.weight_g,
+        shop_url=data.product_url,
+        color_mode="multi" if len(colors) > 1 else "single",
+        multi_color_style="striped" if len(colors) > 1 else None,
+        custom_fields=_openprinttag_filament_fields(data),
+    )
+    db.add(filament)
+    await db.flush()
+    for position, color in enumerate(colors, start=1):
+        db.add(
+            FilamentColor(
+                filament_id=filament.id,
+                color_id=color.id,
+                position=position,
+            )
+        )
+    await db.flush()
+    await db.refresh(filament, attribute_names=["filament_colors"])
+    return filament, True
+
+
+async def _import_openprinttag_once(
+    db: AsyncSession,
+    data: OpenPrintTagSpoolImport,
+    external_id: str,
+    device: Device,
+) -> tuple[ImportResponse, bool]:
+    await _ensure_extra_fields(db)
+    existing = await _load_spool(db, external_id)
+    if existing is not None:
+        return await _resolve_openprinttag_existing(db, existing, data, device)
+
+    await _validate_storage_location(db, data.location_id)
+    status = await _resolve_status(db)
+    manufacturer, _ = await _resolve_manufacturer(db, data)
+    primary, _ = await _resolve_color(db, data.color_name, data.primary_rgba)
+    colors = [primary]
+    if data.secondary_rgba:
+        secondary, _ = await _resolve_color(
+            db, f"{data.color_name} (secondary)", data.secondary_rgba
+        )
+        colors.append(secondary)
+    filament, _ = await _resolve_openprinttag_filament(
+        db, manufacturer, colors, data
+    )
+    spool = Spool(
+        filament_id=filament.id,
+        status_id=status.id,
+        location_id=data.location_id,
+        external_id=external_id,
+        stocked_in_at=datetime.now(timezone.utc),
+        initial_total_weight_g=data.weight_g,
+        remaining_weight_g=data.remaining_weight_g
+        if data.remaining_weight_g is not None
+        else data.weight_g,
+        custom_fields=_openprinttag_spool_fields(data),
+    )
+    db.add(spool)
+    await db.flush()
+    await db.refresh(spool)
+    return _openprinttag_response(spool, data, "created"), True
+
+
+async def import_openprinttag_spool(
+    db: AsyncSession, data: OpenPrintTagSpoolImport, device: Device
+) -> ImportResult:
+    external_id = canonical_openprinttag_external_id(data.external_id)
+    for attempt in range(2):
+        try:
+            response, changed = await _import_openprinttag_once(
+                db, data, external_id, device
+            )
+            await db.commit()
+            if changed:
+                await _publish_changes()
+            return ImportResult(
+                response=response,
+                http_status=201 if response.status == "created" else 200,
+            )
+        except ImportConflict:
+            await db.rollback()
+            raise
+        except IntegrityError:
+            await db.rollback()
+            existing = await _load_spool(db, external_id)
+            if existing is not None:
+                response, changed = await _resolve_openprinttag_existing(
+                    db, existing, data, device
+                )
+                await db.commit()
+                if changed:
+                    await _publish_changes()
+                return ImportResult(response=response, http_status=200)
+            if attempt == 0:
+                continue
+            raise
+        except Exception:
+            await db.rollback()
+            raise
+    raise RuntimeError("FilaScan OpenPrintTag import retry exhausted")
 
 
 async def _publish_changes() -> None:

@@ -4,16 +4,16 @@
 [![Release](https://img.shields.io/github/v/release/MasonVX/filascan-import?display_name=tag)](https://github.com/MasonVX/filascan-import/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-An independent FilaMan integration plugin that accepts decoded Bambu spool data
+An independent FilaMan integration plugin that accepts decoded Bambu and OpenPrintTag spool data
 from an authorized FilaScan device. FilaScan only needs its existing Device token;
 the plugin performs the narrowly scoped inventory transaction without granting
 generic manufacturer, color, filament or spool CRUD scopes.
 
-Current plugin version: **0.1.13**
+Current plugin version: **0.2.0**
 
 ## Features
 
-- Idempotent import of decoded Bambu spool data using the canonical Tray UUID.
+- Idempotent import of decoded Bambu and OpenPrintTag spool data.
 - Explicit allow-list of registered FilaMan devices.
 - Required location selection for new spools.
 - Controlled moves of existing spools between regular storage locations.
@@ -25,17 +25,22 @@ Current plugin version: **0.1.13**
 
 ## Identity
 
-The request carries the raw 32-character Tray UUID from RFID block 9 in
-`external_id`. The plugin normalizes it to uppercase and stores the namespaced
-FilaMan identity:
+For Bambu spools, the request carries the 32-character Tray UUID and stores it
+as:
 
 ```text
 bambulab:<TRAY_UUID>
 ```
 
-This is the same convention used by Bambu Cloud Connect and the Bambu MQTT
-driver. The physical RFID chip UID is forbidden by the request schema and is
-never logged or stored.
+For OpenPrintTag spools, the tag's instance UUID is stored as:
+
+```text
+openprinttag:<instance-uuid>
+```
+
+The Bambu identity is shared with Bambu Cloud Connect and the Bambu MQTT
+driver. The physical RFID chip UID is not part of either import payload and is
+never logged or stored by the plugin.
 
 ## Authorization
 
@@ -61,6 +66,11 @@ Authorization: Device dev.<id>.<secret>
 Content-Type: application/json
 ```
 
+OpenPrintTag uses the same endpoint with `type=openprinttag`. Its payload keeps
+the source instance, brand and material UUIDs, GTIN, material and color data,
+weights, dimensions and temperature recommendations separate from Bambu
+metadata.
+
 ```http
 POST /api/v1/devices/filascan/spools/<spool_id>/location
 Authorization: Device dev.<id>.<secret>
@@ -77,16 +87,16 @@ Content-Type: application/json
 {}
 ```
 
-The Bambu payload must include a positive `location_id`. For a new spool, the
+Every import payload must include a positive `location_id`. For a new spool, the
 plugin verifies that the selected location exists and is a regular,
 user-managed storage location; printer-driver locations such as Bambu AMS slots
 are rejected. The selected location is stored as part of the same transaction
 as manufacturer, ordered colors, filament and spool creation.
 
 The import resolves the spool first. Repeated or concurrent requests for the
-same Tray UUID return the existing spool and never move it to the newly
+same source identity return the existing spool and never move it to the newly
 submitted location. Existing user-maintained weight, location and native
-inventory fields are not overwritten; missing Bambu metadata may be added.
+inventory fields are not overwritten; missing source metadata may be added.
 
 For an existing spool, the location endpoint moves it through FilaMan's
 `SpoolService`. This records a `move_location` event attributed to the
@@ -121,6 +131,12 @@ same metadata contract as the Bambu Lab plugin:
 | `article_number` | Filament | Visible five-digit Bambu color/product code. |
 | `bambu_filament_length_m` | Spool | Visible source filament length in metres. |
 | `bambu_production_date` | Spool | Visible Bambu production timestamp. |
+| `openprinttag_brand_uuid` | Filament | OpenPrintTag brand identity. |
+| `openprinttag_material_uuid` | Filament | OpenPrintTag material identity. |
+| `openprinttag_gtin` | Filament | Product GTIN, when present. |
+| `openprinttag_instance_uuid` | Spool | Stable OpenPrintTag spool identity. |
+| `openprinttag_empty_container_weight_g` | Spool | Empty container weight. |
+| `openprinttag_filament_length_m` | Spool | Source filament length. |
 
 The Tray UUID is stored canonically in the spool's native `external_id` rather
 than duplicated as an extra field. Color names and RGB colors use FilaMan's
@@ -154,8 +170,8 @@ After installation:
 This repository contains only the FilaMan integration plugin. FilaScan firmware
 is maintained separately in [MasonVX/FilaScan](https://github.com/MasonVX/FilaScan).
 The plugin is independent of the Bambu Cloud Connect integration and the Bambu
-Lab printer driver, but all three can safely identify the same physical spool
-through `external_id=bambulab:<TRAY_UUID>`.
+Lab printer driver. Bambu integrations share `external_id=bambulab:<TRAY_UUID>`;
+OpenPrintTag inventory uses its separate `openprinttag:<instance-uuid>` namespace.
 
 FilaMan loads integration plugins against its own backend APIs. Continuous
 integration therefore checks this plugin against the current public
