@@ -233,48 +233,6 @@ EXTRA_FIELD_DEFINITIONS = (
         "text",
         {"max_length": 64},
     ),
-    (
-        "filament",
-        "openprinttag_material_uuid",
-        "OpenPrintTag Material UUID",
-        "text",
-        {"max_length": 36},
-    ),
-    (
-        "filament",
-        "openprinttag_brand_uuid",
-        "OpenPrintTag Brand UUID",
-        "text",
-        {"max_length": 36},
-    ),
-    (
-        "filament",
-        "openprinttag_gtin",
-        "GTIN",
-        "text",
-        {"max_length": 20},
-    ),
-    (
-        "spool",
-        "openprinttag_instance_uuid",
-        "OpenPrintTag Instance UUID",
-        "text",
-        {"max_length": 36},
-    ),
-    (
-        "spool",
-        "openprinttag_empty_container_weight_g",
-        "Empty Container Weight",
-        "number",
-        {"unit": "g", "decimal_places": 2, "min_bound": 0},
-    ),
-    (
-        "spool",
-        "openprinttag_filament_length_m",
-        "Filament Length",
-        "number",
-        {"unit": "m", "decimal_places": 2, "min_bound": 0},
-    ),
 )
 
 
@@ -894,28 +852,6 @@ async def import_bambu_spool(
     raise RuntimeError("FilaScan import retry exhausted")
 
 
-def _openprinttag_filament_fields(data: OpenPrintTagSpoolImport) -> dict:
-    return {
-        "openprinttag_brand_uuid": data.brand_uuid,
-        "openprinttag_material_uuid": data.material_uuid,
-        "openprinttag_gtin": str(data.gtin) if data.gtin is not None else None,
-        "openprinttag_nozzle_temperature_min_c": data.nozzle_temperature_min_c,
-        "openprinttag_nozzle_temperature_max_c": data.nozzle_temperature_max_c,
-        "openprinttag_bed_temperature_min_c": data.bed_temperature_min_c,
-        "openprinttag_bed_temperature_max_c": data.bed_temperature_max_c,
-        "openprinttag_drying_temperature_c": data.drying_temperature_c,
-        "openprinttag_drying_time_h": data.drying_time_h,
-    }
-
-
-def _openprinttag_spool_fields(data: OpenPrintTagSpoolImport) -> dict:
-    return {
-        "openprinttag_instance_uuid": data.external_id,
-        "openprinttag_empty_container_weight_g": data.empty_container_weight_g,
-        "openprinttag_filament_length_m": data.filament_length_m,
-    }
-
-
 def _openprinttag_response(
     spool: Spool, data: OpenPrintTagSpoolImport, status: str
 ) -> ImportResponse:
@@ -961,20 +897,6 @@ async def _resolve_openprinttag_existing(
 ) -> tuple[ImportResponse, bool]:
     _assert_openprinttag_compatible(spool, data)
     changed = False
-    filament_fields, filament_changed = _merge_missing(
-        spool.filament.custom_fields, _openprinttag_filament_fields(data)
-    )
-    if filament_changed:
-        spool.filament.custom_fields = filament_fields
-        flag_modified(spool.filament, "custom_fields")
-        changed = True
-    spool_fields, spool_changed = _merge_missing(
-        spool.custom_fields, _openprinttag_spool_fields(data)
-    )
-    if spool_changed:
-        spool.custom_fields = spool_fields
-        flag_modified(spool, "custom_fields")
-        changed = True
     if data.product_url and not spool.filament.shop_url:
         spool.filament.shop_url = data.product_url
         changed = True
@@ -1030,7 +952,7 @@ async def _resolve_openprinttag_filament(
         shop_url=data.product_url,
         color_mode="multi" if len(colors) > 1 else "single",
         multi_color_style="striped" if len(colors) > 1 else None,
-        custom_fields=_openprinttag_filament_fields(data),
+        custom_fields=None,
     )
     db.add(filament)
     await db.flush()
@@ -1081,7 +1003,7 @@ async def _import_openprinttag_once(
         remaining_weight_g=data.remaining_weight_g
         if data.remaining_weight_g is not None
         else data.weight_g,
-        custom_fields=_openprinttag_spool_fields(data),
+        custom_fields=None,
     )
     db.add(spool)
     await db.flush()

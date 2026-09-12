@@ -7,9 +7,12 @@ All notable changes to this project are documented in this file.
 ### Added
 
 - Idempotent OpenPrintTag spool import through `type=openprinttag`.
-- Separate OpenPrintTag instance identity and source metadata fields.
+- Namespaced OpenPrintTag instance identity using FilaMan's native
+  `external_id` field.
 - Reuse of the existing FilaScan location selection, movement, archival and
   restoration workflow for OpenPrintTag spools.
+
+OpenPrintTag imports do not create additional FilaMan system fields.
 
 ## [0.1.13] - 2026-08-30
 

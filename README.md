@@ -66,10 +66,9 @@ Authorization: Device dev.<id>.<secret>
 Content-Type: application/json
 ```
 
-OpenPrintTag uses the same endpoint with `type=openprinttag`. Its payload keeps
-the source instance, brand and material UUIDs, GTIN, material and color data,
-weights, dimensions and temperature recommendations separate from Bambu
-metadata.
+OpenPrintTag uses the same endpoint with `type=openprinttag`. It maps only data
+with a native FilaMan destination: spool identity, manufacturer, material,
+colors, weight, diameter, product URL and location.
 
 ```http
 POST /api/v1/devices/filascan/spools/<spool_id>/location
@@ -131,12 +130,6 @@ same metadata contract as the Bambu Lab plugin:
 | `article_number` | Filament | Visible five-digit Bambu color/product code. |
 | `bambu_filament_length_m` | Spool | Visible source filament length in metres. |
 | `bambu_production_date` | Spool | Visible Bambu production timestamp. |
-| `openprinttag_brand_uuid` | Filament | OpenPrintTag brand identity. |
-| `openprinttag_material_uuid` | Filament | OpenPrintTag material identity. |
-| `openprinttag_gtin` | Filament | Product GTIN, when present. |
-| `openprinttag_instance_uuid` | Spool | Stable OpenPrintTag spool identity. |
-| `openprinttag_empty_container_weight_g` | Spool | Empty container weight. |
-| `openprinttag_filament_length_m` | Spool | Source filament length. |
 
 The Tray UUID is stored canonically in the spool's native `external_id` rather
 than duplicated as an extra field. Color names and RGB colors use FilaMan's
@@ -144,6 +137,10 @@ native color records. Material identity and temperature/drying metadata remain
 on the shared filament record for integration compatibility but are not
 registered as additional visible fields. Physical RFID-chip fields remain
 owned exclusively by the Bambu Lab plugin.
+
+OpenPrintTag does not register additional system fields. Its instance UUID is
+stored only in native `external_id`; all other imported values use native
+FilaMan fields.
 
 Upgrading removes obsolete FilaScan-owned field definitions on the next scan
 while retaining existing record data. Legacy `bambu_color_code` and

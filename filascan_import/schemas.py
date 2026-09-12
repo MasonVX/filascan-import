@@ -124,18 +124,7 @@ class OpenPrintTagSpoolImport(BaseModel):
     product_url: str | None = Field(default=None, max_length=500)
     weight_g: float | None = Field(default=None, gt=0, le=100_000)
     remaining_weight_g: float | None = Field(default=None, ge=0, le=100_000)
-    empty_container_weight_g: float | None = Field(default=None, ge=0, le=100_000)
     diameter_mm: float | None = Field(default=None, gt=0, le=5)
-    filament_length_m: float | None = Field(default=None, gt=0, le=1_000_000)
-    nozzle_temperature_min_c: float | None = Field(default=None, gt=0, le=500)
-    nozzle_temperature_max_c: float | None = Field(default=None, gt=0, le=500)
-    bed_temperature_min_c: float | None = Field(default=None, gt=0, le=500)
-    bed_temperature_max_c: float | None = Field(default=None, gt=0, le=500)
-    drying_temperature_c: float | None = Field(default=None, gt=0, le=500)
-    drying_time_h: float | None = Field(default=None, gt=0, le=1_000)
-    brand_uuid: str | None = Field(default=None, max_length=36)
-    material_uuid: str | None = Field(default=None, max_length=36)
-    gtin: int | None = Field(default=None, ge=0)
 
     @field_validator("external_id")
     @classmethod
@@ -144,11 +133,6 @@ class OpenPrintTagSpoolImport(BaseModel):
         if parsed.int == 0:
             raise ValueError("all-zero instance UUID is not a spool identity")
         return str(parsed)
-
-    @field_validator("brand_uuid", "material_uuid")
-    @classmethod
-    def validate_optional_uuid(cls, value: str | None) -> str | None:
-        return None if not value else str(UUID(value))
 
     @field_validator("primary_rgba", "secondary_rgba")
     @classmethod
@@ -163,15 +147,6 @@ class OpenPrintTagSpoolImport(BaseModel):
         parsed = urlsplit(value)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("must be an absolute HTTP(S) URL")
-        return value
-
-    @field_validator("nozzle_temperature_max_c", "bed_temperature_max_c")
-    @classmethod
-    def validate_temperature_range(cls, value: float | None, info):
-        minimum_key = info.field_name.replace("max", "min")
-        minimum = info.data.get(minimum_key)
-        if value is not None and minimum is not None and value < minimum:
-            raise ValueError(f"must be greater than or equal to {minimum_key}")
         return value
 
 class ImportResponse(BaseModel):

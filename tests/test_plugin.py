@@ -88,18 +88,7 @@ def openprinttag_payload(**overrides):
         "product_url": "https://openprinttag.org/t/8bc3b75d-4702-4c46-a9c1-2fc81ec03ebf",
         "weight_g": 1000,
         "remaining_weight_g": 875,
-        "empty_container_weight_g": 201,
         "diameter_mm": 1.75,
-        "filament_length_m": 330,
-        "nozzle_temperature_min_c": 230,
-        "nozzle_temperature_max_c": 250,
-        "bed_temperature_min_c": 80,
-        "bed_temperature_max_c": 90,
-        "drying_temperature_c": 55,
-        "drying_time_h": 6,
-        "brand_uuid": "11ebd31e-58af-431a-9bcb-2a05df7c1cbb",
-        "material_uuid": "637ed350-fdf5-49f9-9f7a-a68b8819f063",
-        "gtin": 8594173676228,
     }
     payload.update(overrides)
     return payload
@@ -394,11 +383,8 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(filament.material_type, "PETG")
         self.assertEqual(filament.manufacturer_color_name, "Prusa Galaxy Black")
         self.assertEqual(spool.remaining_weight_g, 875)
-        self.assertEqual(
-            spool.custom_fields["openprinttag_instance_uuid"],
-            OPENPRINTTAG_UUID,
-        )
-        self.assertNotIn("rfid_uid", spool.custom_fields)
+        self.assertIsNone(spool.custom_fields)
+        self.assertIsNone(filament.custom_fields)
 
     async def test_spool_type_must_match_payload(self):
         bambu_as_openprinttag = await self.import_request(
