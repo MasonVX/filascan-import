@@ -11,6 +11,8 @@ All notable changes to this project are documented in this file.
   `external_id` field.
 - Reuse of the existing FilaScan location selection, movement, archival and
   restoration workflow for OpenPrintTag spools.
+- Matching of OpenPrintTag materials against existing FilamentDB imports by
+  manufacturer, material type and RGB colors, with fuzzy name disambiguation.
 
 OpenPrintTag imports do not create additional FilaMan system fields.
 

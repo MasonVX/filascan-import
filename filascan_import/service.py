@@ -25,6 +25,7 @@ from app.models import (
     SystemExtraField,
 )
 from app.services.spool_service import SpoolService
+from app.utils.search import FUZZY_MATCH_THRESHOLD, fuzzy_token_score
 
 from .schemas import (
     ArchiveSpoolResponse,
@@ -918,29 +919,74 @@ async def _resolve_openprinttag_existing(
     ), changed
 
 
-async def _resolve_openprinttag_filament(
+def _openprinttag_candidate_score(
+    filament: Filament, data: OpenPrintTagSpoolImport
+) -> float:
+    return max(
+        fuzzy_token_score(filament.designation or "", data.material_name),
+        fuzzy_token_score(
+            filament.manufacturer_color_name or "", data.color_name
+        ),
+    )
+
+
+async def _find_openprinttag_filament(
     db: AsyncSession,
     manufacturer: Manufacturer,
-    colors: list[Color],
     data: OpenPrintTagSpoolImport,
-) -> tuple[Filament, bool]:
+) -> Filament | None:
+    expected_rgbs = [_rgb(data.primary_rgba)]
+    if data.secondary_rgba:
+        expected_rgbs.append(_rgb(data.secondary_rgba))
     result = await db.execute(
         select(Filament)
         .where(
             Filament.manufacturer_id == manufacturer.id,
-            func.lower(Filament.designation) == data.material_name.casefold(),
             func.lower(Filament.material_type) == data.material_type.casefold(),
         )
-        .options(selectinload(Filament.filament_colors))
+        .options(
+            selectinload(Filament.filament_colors).selectinload(
+                FilamentColor.color
+            )
+        )
     )
-    matches = list(result.scalars().unique().all())
-    if len(matches) > 1:
-        raise ImportConflict("Multiple filaments match the OpenPrintTag identity")
-    if matches:
-        filament = matches[0]
-        if _ordered_color_ids(filament) != [color.id for color in colors]:
-            raise ImportConflict("Existing filament has incompatible ordered colors")
-        return filament, False
+    candidates = [
+        filament
+        for filament in result.scalars().unique().all()
+        if [
+            item.color.hex_code.upper()
+            for item in sorted(
+                filament.filament_colors, key=lambda item: item.position
+            )
+            if item.color is not None
+        ]
+        == expected_rgbs
+    ]
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    scored = sorted(
+        ((_openprinttag_candidate_score(item, data), item) for item in candidates),
+        key=lambda pair: (-pair[0], pair[1].id),
+    )
+    best_score, best = scored[0]
+    if best_score < FUZZY_MATCH_THRESHOLD or (
+        len(scored) > 1 and scored[1][0] == best_score
+    ):
+        raise ImportConflict(
+            "Multiple color-matched filaments have no unique name match"
+        )
+    return best
+
+
+async def _create_openprinttag_filament(
+    db: AsyncSession,
+    manufacturer: Manufacturer,
+    colors: list[Color],
+    data: OpenPrintTagSpoolImport,
+) -> Filament:
 
     filament = Filament(
         manufacturer_id=manufacturer.id,
@@ -966,7 +1012,7 @@ async def _resolve_openprinttag_filament(
         )
     await db.flush()
     await db.refresh(filament, attribute_names=["filament_colors"])
-    return filament, True
+    return filament
 
 
 async def _import_openprinttag_once(
@@ -983,16 +1029,26 @@ async def _import_openprinttag_once(
     await _validate_storage_location(db, data.location_id)
     status = await _resolve_status(db)
     manufacturer, _ = await _resolve_manufacturer(db, data)
-    primary, _ = await _resolve_color(db, data.color_name, data.primary_rgba)
-    colors = [primary]
-    if data.secondary_rgba:
-        secondary, _ = await _resolve_color(
-            db, f"{data.color_name} (secondary)", data.secondary_rgba
+    filament = await _find_openprinttag_filament(db, manufacturer, data)
+    if filament is not None:
+        colors = [
+            item.color
+            for item in sorted(
+                filament.filament_colors, key=lambda item: item.position
+            )
+            if item.color is not None
+        ]
+    else:
+        primary, _ = await _resolve_color(db, data.color_name, data.primary_rgba)
+        colors = [primary]
+        if data.secondary_rgba:
+            secondary, _ = await _resolve_color(
+                db, f"{data.color_name} (secondary)", data.secondary_rgba
+            )
+            colors.append(secondary)
+        filament = await _create_openprinttag_filament(
+            db, manufacturer, colors, data
         )
-        colors.append(secondary)
-    filament, _ = await _resolve_openprinttag_filament(
-        db, manufacturer, colors, data
-    )
     spool = Spool(
         filament_id=filament.id,
         status_id=status.id,

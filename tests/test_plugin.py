@@ -81,9 +81,9 @@ def openprinttag_payload(**overrides):
         "external_id": OPENPRINTTAG_UUID,
         "manufacturer": "Prusament",
         "material_type": "PETG",
-        "material_name": "Prusament PETG Prusa Galaxy Black",
+        "material_name": "PETG Prusa Galaxy Black",
         "color_name": "Prusa Galaxy Black",
-        "primary_rgba": "#202124FF",
+        "primary_rgba": "#3D3E3DFF",
         "secondary_rgba": None,
         "product_url": "https://openprinttag.org/t/8bc3b75d-4702-4c46-a9c1-2fc81ec03ebf",
         "weight_g": 1000,
@@ -385,6 +385,88 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(spool.remaining_weight_g, 875)
         self.assertIsNone(spool.custom_fields)
         self.assertIsNone(filament.custom_fields)
+
+    async def test_openprinttag_reuses_single_filamentdb_color_match(self):
+        async with self.sessions() as db:
+            manufacturer = Manufacturer(
+                name="Prusament", custom_fields={"filamentdb_id": 689}
+            )
+            color = Color(name="Galaxy Black", hex_code="#3D3E3D")
+            db.add_all([manufacturer, color])
+            await db.flush()
+            filament = Filament(
+                manufacturer_id=manufacturer.id,
+                designation="Galaxy - Galaxy Black",
+                material_type="PETG",
+                diameter_mm=1.75,
+                manufacturer_color_name="Galaxy Black",
+                custom_fields={"filamentdb_id": 2541},
+            )
+            db.add(filament)
+            await db.flush()
+            db.add(
+                FilamentColor(
+                    filament_id=filament.id, color_id=color.id, position=1
+                )
+            )
+            await db.commit()
+            filament_id = filament.id
+
+        response = await self.import_request(
+            openprinttag_payload(), spool_type="openprinttag"
+        )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()["filament_id"], filament_id)
+        async with self.sessions() as db:
+            self.assertEqual(
+                await db.scalar(select(func.count()).select_from(Filament)), 1
+            )
+            self.assertEqual(
+                await db.scalar(select(func.count()).select_from(Color)), 1
+            )
+
+    async def test_openprinttag_uses_fuzzy_name_for_multiple_color_matches(self):
+        async with self.sessions() as db:
+            manufacturer = Manufacturer(name="Prusament")
+            color = Color(name="Galaxy Black", hex_code="#3D3E3D")
+            db.add_all([manufacturer, color])
+            await db.flush()
+            galaxy = Filament(
+                manufacturer_id=manufacturer.id,
+                designation="Galaxy - Galaxy Black",
+                material_type="PETG",
+                diameter_mm=1.75,
+                manufacturer_color_name="Galaxy Black",
+            )
+            other = Filament(
+                manufacturer_id=manufacturer.id,
+                designation="Special - Anthracite",
+                material_type="PETG",
+                diameter_mm=1.75,
+                manufacturer_color_name="Anthracite",
+            )
+            db.add_all([galaxy, other])
+            await db.flush()
+            db.add_all(
+                [
+                    FilamentColor(
+                        filament_id=galaxy.id, color_id=color.id, position=1
+                    ),
+                    FilamentColor(
+                        filament_id=other.id, color_id=color.id, position=1
+                    ),
+                ]
+            )
+            await db.commit()
+            galaxy_id = galaxy.id
+
+        response = await self.import_request(
+            openprinttag_payload(), spool_type="openprinttag"
+        )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()["filament_id"], galaxy_id)
 
     async def test_spool_type_must_match_payload(self):
         bambu_as_openprinttag = await self.import_request(

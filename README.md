@@ -70,6 +70,12 @@ OpenPrintTag uses the same endpoint with `type=openprinttag`. It maps only data
 with a native FilaMan destination: spool identity, manufacturer, material,
 colors, weight, diameter, product URL and location.
 
+Before creating a filament, the plugin searches existing FilaMan entries by
+manufacturer, material type and ordered RGB colors. A single color match is
+reused directly. If several entries have the same colors, FilaMan's existing
+fuzzy name matcher selects a unique sufficiently strong match; ambiguous
+results are rejected instead of creating an unsafe association.
+
 ```http
 POST /api/v1/devices/filascan/spools/<spool_id>/location
 Authorization: Device dev.<id>.<secret>
