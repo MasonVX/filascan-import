@@ -1,4 +1,5 @@
 {
+  "icon": "icon.svg",
   "plugin_key": "filascan_import",
   "name": "FilaScan Spool Import",
   "version": "0.2.0",
