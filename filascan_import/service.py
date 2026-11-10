@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import case, func, select
+from sqlalchemy import JSON, String, case, cast, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -408,7 +408,53 @@ def _migrate_legacy_generated_filament(
     return True
 
 
-def _merge_filament_metadata(filament: Filament, data: BambuSpoolImport) -> bool:
+def _native_temperatures(data: BambuSpoolImport) -> dict:
+    nozzle_min = data.nozzle_temperature_min_c
+    nozzle_max = data.nozzle_temperature_max_c
+    bed = data.bed_temperature_c
+    fields = {
+        "extruder_temp_range_c": (
+            {"min": nozzle_min, "max": nozzle_max}
+            if nozzle_min is not None or nozzle_max is not None
+            else None
+        ),
+        "bed_temp_range_c": {"min": bed, "max": bed} if bed is not None else None,
+        "drying_temp_c": data.drying_temperature_c,
+        "drying_time_hours": data.drying_time_h,
+    }
+    # Older FilaMan models only support the legacy custom fields.
+    return {
+        field: value
+        for field, value in fields.items()
+        if value is not None and hasattr(Filament, field)
+    }
+
+
+async def _fill_native_temperatures(
+    db: AsyncSession, filament: Filament, data: BambuSpoolImport
+) -> bool:
+    changed = False
+    for field, value in _native_temperatures(data).items():
+        if getattr(filament, field) is not None:
+            continue
+        column = getattr(Filament, field)
+        empty = column.is_(None)
+        if isinstance(column.type, JSON):
+            empty |= cast(column, String) == "null"
+        # Check at write time in case another request filled the field after our read.
+        result = await db.execute(
+            update(Filament)
+            .where(Filament.id == filament.id, empty)
+            .values({column: value})
+            .execution_options(synchronize_session=False)
+        )
+        changed = changed or result.rowcount > 0
+    return changed
+
+
+async def _merge_filament_metadata(
+    db: AsyncSession, filament: Filament, data: BambuSpoolImport
+) -> bool:
     fields, changed = _merge_missing(
         filament.custom_fields, _filament_custom_fields(data)
     )
@@ -417,6 +463,8 @@ def _merge_filament_metadata(filament: Filament, data: BambuSpoolImport) -> bool
         flag_modified(filament, "custom_fields")
     if data.product_image_url and filament.shop_url == data.product_image_url:
         filament.shop_url = None
+        changed = True
+    if await _fill_native_temperatures(db, filament, data):
         changed = True
     return changed
 
@@ -465,7 +513,7 @@ async def _resolve_existing(
         flag_modified(spool, "custom_fields")
         changed = True
 
-    if _merge_filament_metadata(spool.filament, data):
+    if await _merge_filament_metadata(db, spool.filament, data):
         changed = True
 
     archived_status = await _get_status_by_key(db, "archived")
@@ -691,6 +739,7 @@ async def _resolve_filament(
         expected_color_ids = [color.id for color in colors]
         if existing_color_ids != expected_color_ids:
             raise ImportConflict("Existing filament has incompatible ordered colors")
+        await _fill_native_temperatures(db, filament, data)
         return filament, False
 
     filament = Filament(
@@ -706,6 +755,7 @@ async def _resolve_filament(
         color_mode="multi" if len(colors) > 1 else "single",
         multi_color_style="striped" if len(colors) > 1 else None,
         custom_fields=_filament_custom_fields(data),
+        **_native_temperatures(data),
     )
     db.add(filament)
     await db.flush()
@@ -766,7 +816,7 @@ async def _import_once(
     manufacturer, manufacturer_created = await _resolve_manufacturer(db, data)
     filament = await _find_catalog_filament(db, manufacturer.id, data)
     if filament is not None:
-        _merge_filament_metadata(filament, data)
+        await _merge_filament_metadata(db, filament, data)
         colors = [
             item.color
             for item in sorted(

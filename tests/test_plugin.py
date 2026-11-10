@@ -16,6 +16,7 @@ from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import deps as deps_module
+from app.api.v1.filaments import router_filaments
 from app.core import middleware as middleware_module
 from app.core.middleware import AuthMiddleware, invalidate_auth_caches
 from app.core.security import hash_token
@@ -168,6 +169,7 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
 
         self.app = FastAPI()
         self.app.include_router(router, prefix="/api/v1")
+        self.app.include_router(router_filaments, prefix="/api/v1")
         self.app.dependency_overrides[deps_module.get_db] = override_get_db
         self.app.add_middleware(AuthMiddleware)
         self.middleware_patch = patch.object(
@@ -855,6 +857,157 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
             filament.custom_fields["bambu_nozzle_temperature_min_c"]
         )
 
+    @unittest.skipUnless(
+        hasattr(Filament, "extruder_temp_range_c"), "requires native temperatures"
+    )
+    async def test_bambu_import_populates_native_filament_temperatures(self):
+        imported = await self.import_request(
+            spool_payload(
+                nozzle_temperature_min_c=210,
+                nozzle_temperature_max_c=230,
+                bed_temperature_c=55,
+                drying_temperature_c=50,
+                drying_time_h=6,
+            )
+        )
+        self.assertEqual(imported.status_code, 201, imported.text)
+
+        response = await self.client.get(
+            f"/api/v1/filaments/{imported.json()['filament_id']}",
+            headers=self.device_header(),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        filament = response.json()
+        self.assertEqual(filament["extruder_temp_range_c"], {"min": 210, "max": 230})
+        self.assertEqual(filament["bed_temp_range_c"], {"min": 55, "max": 55})
+        self.assertEqual(filament["drying_temp_c"], 50)
+        self.assertEqual(filament["drying_time_hours"], 6)
+
+    @unittest.skipUnless(
+        hasattr(Filament, "extruder_temp_range_c"), "requires native temperatures"
+    )
+    async def test_rescan_fills_only_blank_native_temperatures_on_legacy_filament(self):
+        imported = await self.import_request()
+        self.assertEqual(imported.status_code, 201, imported.text)
+        spool_id = imported.json()["spool_id"]
+        filament_id = imported.json()["filament_id"]
+        async with self.sessions() as db:
+            filament = await db.get(Filament, filament_id)
+            filament.extruder_temp_range_c = {"min": 205, "max": None}
+            filament.bed_temp_range_c = None
+            filament.drying_temp_c = 45
+            filament.drying_time_hours = None
+            await db.commit()
+
+        rescanned = await self.import_request()
+        self.assertEqual(rescanned.status_code, 200, rescanned.text)
+        self.assertEqual(rescanned.json()["status"], "updated")
+        self.assertEqual(rescanned.json()["spool_id"], spool_id)
+        self.assertEqual(rescanned.json()["filament_id"], filament_id)
+
+        async with self.sessions() as db:
+            filament = await db.get(Filament, filament_id)
+            self.assertEqual(filament.extruder_temp_range_c, {"min": 205, "max": None})
+            self.assertEqual(filament.bed_temp_range_c, {"min": 55, "max": 55})
+            self.assertEqual(filament.drying_temp_c, 45)
+            self.assertEqual(filament.drying_time_hours, 8)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(Filament)), 1)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(Spool)), 1)
+
+        repeated = await self.import_request()
+        self.assertEqual(repeated.status_code, 200, repeated.text)
+        self.assertEqual(repeated.json()["status"], "existing")
+
+    @unittest.skipUnless(
+        hasattr(Filament, "extruder_temp_range_c"), "requires native temperatures"
+    )
+    async def test_rescan_preserves_native_temperatures_set_after_it_reads_the_filament(self):
+        imported = await self.import_request()
+        self.assertEqual(imported.status_code, 201, imported.text)
+        filament_id = imported.json()["filament_id"]
+        async with self.sessions() as db:
+            filament = await db.get(Filament, filament_id)
+            filament.extruder_temp_range_c = None
+            filament.bed_temp_range_c = None
+            filament.drying_temp_c = None
+            filament.drying_time_hours = None
+            await db.commit()
+
+        load_spool = service_module._load_spool
+
+        async def load_spool_before_edit(*args):
+            spool = await load_spool(*args)
+            async with self.sessions() as db:
+                filament = await db.get(Filament, filament_id)
+                filament.extruder_temp_range_c = {"min": 205, "max": None}
+                filament.drying_temp_c = 45
+                await db.commit()
+            return spool
+
+        with patch.object(service_module, "_load_spool", load_spool_before_edit):
+            rescanned = await self.import_request()
+
+        self.assertEqual(rescanned.status_code, 200, rescanned.text)
+        self.assertEqual(rescanned.json()["status"], "updated")
+        async with self.sessions() as db:
+            filament = await db.get(Filament, filament_id)
+        self.assertEqual(filament.extruder_temp_range_c, {"min": 205, "max": None})
+        self.assertEqual(filament.bed_temp_range_c, {"min": 55, "max": 55})
+        self.assertEqual(filament.drying_temp_c, 45)
+        self.assertEqual(filament.drying_time_hours, 8)
+
+    @unittest.skipUnless(
+        hasattr(Filament, "extruder_temp_range_c"), "requires native temperatures"
+    )
+    async def test_bambu_import_preserves_partial_nozzle_range_and_missing_temperatures(self):
+        for index, (minimum, maximum, expected) in enumerate(
+            [
+                (215, None, {"min": 215, "max": None}),
+                (None, 240, {"min": None, "max": 240}),
+                (None, None, None),
+            ],
+            start=1,
+        ):
+            with self.subTest(minimum=minimum, maximum=maximum):
+                imported = await self.import_request(
+                    spool_payload(
+                        external_id=f"{index:032x}",
+                        color_name=f"Test color {index}",
+                        bambu_color_code=None,
+                        nozzle_temperature_min_c=minimum,
+                        nozzle_temperature_max_c=maximum,
+                        bed_temperature_c=None,
+                        drying_temperature_c=None,
+                        drying_time_h=None,
+                    )
+                )
+                self.assertEqual(imported.status_code, 201, imported.text)
+                async with self.sessions() as db:
+                    filament = await db.get(Filament, imported.json()["filament_id"])
+                self.assertEqual(filament.extruder_temp_range_c, expected)
+                self.assertIsNone(filament.bed_temp_range_c)
+                self.assertIsNone(filament.drying_temp_c)
+                self.assertIsNone(filament.drying_time_hours)
+
+    @unittest.skipUnless(
+        hasattr(Filament, "extruder_temp_range_c"), "requires native temperatures"
+    )
+    async def test_new_spool_fills_native_temperatures_on_matching_filament_without_catalog_code(self):
+        first = await self.import_request(
+            spool_payload(bambu_color_code=None, bed_temperature_c=None)
+        )
+        self.assertEqual(first.status_code, 201, first.text)
+
+        second = await self.import_request(
+            spool_payload(bambu_color_code=None, external_id="A" * 32)
+        )
+        self.assertEqual(second.status_code, 201, second.text)
+        self.assertNotEqual(second.json()["spool_id"], first.json()["spool_id"])
+        self.assertEqual(second.json()["filament_id"], first.json()["filament_id"])
+        async with self.sessions() as db:
+            filament = await db.get(Filament, second.json()["filament_id"])
+        self.assertEqual(filament.bed_temp_range_c, {"min": 55, "max": 55})
+
     async def test_first_import_creates_inventory_and_repeat_is_idempotent(self):
         first = await self.import_request()
         second = await self.import_request()
@@ -907,6 +1060,11 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(filament.custom_fields["article_number"], "13109")
         self.assertEqual(filament.custom_fields["bambu_material_id"], "GFA06")
         self.assertEqual(filament.custom_fields["bambu_variant_id"], "A06-D1")
+        self.assertEqual(filament.custom_fields["bambu_nozzle_temperature_min_c"], 190)
+        self.assertEqual(filament.custom_fields["bambu_nozzle_temperature_max_c"], 240)
+        self.assertEqual(filament.custom_fields["bambu_bed_temperature_c"], 55)
+        self.assertEqual(filament.custom_fields["bambu_drying_temperature_c"], 55)
+        self.assertEqual(filament.custom_fields["bambu_drying_time_h"], 8)
         self.assertEqual(
             filament.custom_fields["filament_image_url"],
             "https://store.bblcdn.eu/example.png",
@@ -1046,6 +1204,8 @@ class FilaScanPluginTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await db.scalar(select(func.count()).select_from(Color)), 1)
             enriched = await db.get(Filament, catalog_id)
         self.assertEqual(enriched.custom_fields["filamentdb_id"], 149)
+        if hasattr(Filament, "extruder_temp_range_c"):
+            self.assertEqual(enriched.extruder_temp_range_c, {"min": 190, "max": 240})
         self.assertEqual(enriched.custom_fields["article_number"], "11500")
         self.assertNotIn("bambu_color_code", enriched.custom_fields)
         self.assertEqual(enriched.custom_fields["bambu_material_id"], "GFA01")
